@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - bootstrap/READY
+  pull_request_target:
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
