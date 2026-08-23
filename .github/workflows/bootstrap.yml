@@ -6,8 +6,6 @@ on:
       - bootstrap/READY
   pull_request:
     types: [opened, reopened, synchronize]
-  pull_request_target:
-    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
@@ -16,10 +14,11 @@ jobs:
   bootstrap:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out bootstrap branch
+      - name: Check out verified master data
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: master
 
       - name: Restore and publish XT Music source
         shell: bash
@@ -27,6 +26,9 @@ jobs:
           set -euo pipefail
 
           work="$(mktemp -d)"
+          encoded="$work/xtmusic.b64"
+          archive="$work/xtmusic.tar.gz"
+
           {
             cat bootstrap/chunk-000
             cat bootstrap/chunk-001
@@ -54,12 +56,17 @@ jobs:
             cat bootstrap/repair/005-06
             cat bootstrap/chunk-006
             cat bootstrap/chunk-007
-          } | base64 --decode > "$work/xtmusic.tar.gz"
+          } > "$encoded"
 
-          echo "d6edea75451eb24c94c31b5d2d05acccd5715beaba9f5d8a592440ed54513e8e  $work/xtmusic.tar.gz" | sha256sum --check --strict
+          test "$(wc -c < "$encoded")" = "140364"
+          echo "23b2d3a67d4a1dda134d01c267de86de7c9862ac95a56eae7d1414a5a2bc7410  $encoded" | sha256sum --check --strict
+          test "$(git hash-object "$encoded")" = "08ea849e0dd6d1f23247eda98eb5f946560aeba8"
+
+          base64 --decode "$encoded" > "$archive"
+          echo "d6edea75451eb24c94c31b5d2d05acccd5715beaba9f5d8a592440ed54513e8e  $archive" | sha256sum --check --strict
 
           mkdir "$work/source"
-          tar -xzf "$work/xtmusic.tar.gz" -C "$work/source"
+          tar -xzf "$archive" -C "$work/source"
           test -f "$work/source/package.json"
           test -f "$work/source/README.md"
           test -f "$work/source/src/main/protocol/feiniu-client.js"
