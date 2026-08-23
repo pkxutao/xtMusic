@@ -1,9 +1,6 @@
 name: Bootstrap repository
 
 on:
-  push:
-    paths:
-      - bootstrap/READY
   pull_request:
     types: [opened, reopened, synchronize]
 
@@ -71,7 +68,10 @@ jobs:
           test -f "$work/source/README.md"
           test -f "$work/source/src/main/protocol/feiniu-client.js"
 
-          rsync -a --delete --exclude='.git/' "$work/source/" "$GITHUB_WORKSPACE/"
+          # The GitHub Actions token cannot add workflow files. Preserve this
+          # bootstrap workflow, publish all application source first, then the
+          # connected GitHub app writes the two final CI workflows separately.
+          rsync -a --delete --exclude='.git/' --exclude='.github/workflows/' "$work/source/" "$GITHUB_WORKSPACE/"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
