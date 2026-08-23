@@ -1,0 +1,43 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        # The source package currently omits a generated lockfile, so CI uses
+        # npm install rather than npm ci. Dependency versions are pinned exactly.
+        run: npm install --no-audit --no-fund
+
+      - name: Check and test
+        run: npm run build
+
+      - name: Build Windows packages
+        run: npm run dist:win
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Windows
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+          if-no-files-found: error
