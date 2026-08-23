@@ -23,7 +23,35 @@ jobs:
           set -euo pipefail
 
           work="$(mktemp -d)"
-          cat bootstrap/chunk-* | base64 --decode > "$work/xtmusic.tar.gz"
+          {
+            cat bootstrap/chunk-000
+            cat bootstrap/chunk-001
+            cat bootstrap/chunk-002
+            cat bootstrap/repair/003-00
+            cat bootstrap/repair/003-01
+            cat bootstrap/repair/003-02
+            cat bootstrap/repair/003-03
+            cat bootstrap/repair/003-04
+            cat bootstrap/repair/003-05
+            cat bootstrap/repair/003-06
+            cat bootstrap/repair/004-00
+            cat bootstrap/repair/004-01
+            cat bootstrap/repair/004-02
+            cat bootstrap/repair/004-03
+            cat bootstrap/repair/004-04
+            cat bootstrap/repair/004-05
+            cat bootstrap/repair/004-06
+            cat bootstrap/repair/005-00
+            cat bootstrap/repair/005-01
+            cat bootstrap/repair/005-02
+            cat bootstrap/repair/005-03
+            cat bootstrap/repair/005-04
+            cat bootstrap/repair/005-05
+            cat bootstrap/repair/005-06
+            cat bootstrap/chunk-006
+            cat bootstrap/chunk-007
+          } | base64 --decode > "$work/xtmusic.tar.gz"
+
           echo "d6edea75451eb24c94c31b5d2d05acccd5715beaba9f5d8a592440ed54513e8e  $work/xtmusic.tar.gz" | sha256sum --check --strict
 
           mkdir "$work/source"
