@@ -1,0 +1,80 @@
+{
+  "name": "xtmusic",
+  "version": "0.1.0",
+  "description": "A fast, security-conscious Windows desktop client for FNOS Music.",
+  "main": "src/main/index.js",
+  "type": "commonjs",
+  "author": "pkxutao",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "check": "node scripts/check.js",
+    "check:syntax": "node scripts/syntax-check.js",
+    "build:renderer": "node scripts/build-renderer.js",
+    "start": "npm run build:renderer && electron .",
+    "dev": "npm run build:renderer && electron . --dev",
+    "test": "node --test tests/*.test.js",
+    "build": "npm run check && npm run check:syntax && npm run build:renderer && npm test",
+    "dist:win": "npm run build && electron-builder --win --x64",
+    "pack:win": "npm run build && electron-builder --win dir --x64"
+  },
+  "dependencies": {
+    "hls.js": "1.6.11"
+  },
+  "devDependencies": {
+    "electron": "37.4.0",
+    "electron-builder": "26.0.12",
+    "esbuild": "0.25.8"
+  },
+  "build": {
+    "appId": "com.pkxutao.xtmusic",
+    "productName": "XT Music",
+    "asar": true,
+    "compression": "maximum",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/main/**/*",
+      "src/preload.js",
+      "dist/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "XT-Music-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "XT Music",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "XT-Music-Portable-${version}-${arch}.${ext}"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "npm@10"
+}
