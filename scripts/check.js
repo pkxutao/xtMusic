@@ -27,6 +27,20 @@ for (const file of required) {
   }
 }
 
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+if (compareVersions(pkg.devDependencies?.['electron-builder'], '26.15.0') < 0) {
+  console.error('electron-builder must be >= 26.15.0 because older AppImage builders are security affected.');
+  failed = true;
+}
+if (compareVersions(pkg.devDependencies?.electron, '43.0.0') < 0) {
+  console.error('Electron must stay on a supported 43.x or newer security line.');
+  failed = true;
+}
+if (pkg.build?.toolsets?.appimage !== '1.0.3') {
+  console.error('AppImage must use the static 1.0.3 toolset.');
+  failed = true;
+}
+
 const forbidden = [
   /nodeIntegration\s*:\s*true/,
   /contextIsolation\s*:\s*false/,
@@ -54,6 +68,16 @@ for (const dir of ['src/main', 'src/renderer', 'src/preload.js']) {
 
 if (failed) process.exit(1);
 console.log('Static security checks passed.');
+
+function compareVersions(left, right) {
+  const a = String(left || '').replace(/^[^0-9]*/, '').split('.').map((item) => Number.parseInt(item, 10) || 0);
+  const b = String(right || '').replace(/^[^0-9]*/, '').split('.').map((item) => Number.parseInt(item, 10) || 0);
+  for (let index = 0; index < Math.max(a.length, b.length, 3); index += 1) {
+    const delta = (a[index] || 0) - (b[index] || 0);
+    if (delta !== 0) return delta > 0 ? 1 : -1;
+  }
+  return 0;
+}
 
 function walk(dir) {
   const result = [];
