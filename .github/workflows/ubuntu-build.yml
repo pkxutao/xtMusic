@@ -1,0 +1,45 @@
+name: Ubuntu Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-x64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Check, test and build Ubuntu packages
+        run: npm run dist:ubuntu
+
+      - name: Inspect packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$(find release -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$(find release -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          sha256sum release/*.AppImage release/*.deb
+
+      - name: Upload Ubuntu packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Ubuntu-x64
+          path: |
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
