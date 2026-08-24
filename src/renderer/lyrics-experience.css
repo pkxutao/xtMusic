@@ -24,6 +24,40 @@
   overflow: hidden;
 }
 
+.app-shell.lyrics-experience-active .app-workspace,
+.app-shell.lyrics-experience-active.queue-open .app-workspace {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+.app-shell.lyrics-experience-active #sidebar-root,
+.app-shell.lyrics-experience-active #queue-panel {
+  min-width: 0;
+  overflow: hidden;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease, visibility 180ms ease;
+}
+
+.app-shell.lyrics-experience-active .titlebar {
+  padding-left: 14px;
+  background: color-mix(in srgb, var(--bg) 58%, transparent);
+  backdrop-filter: blur(24px) saturate(1.2);
+}
+
+.app-shell.lyrics-experience-active .global-search-wrap,
+.app-shell.lyrics-experience-active .titlebar-account {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 240ms ease;
+}
+
+.app-shell.lyrics-experience-active .player-bar {
+  background: color-mix(in srgb, var(--player) 86%, transparent);
+  backdrop-filter: blur(28px) saturate(1.2);
+}
+
 .lyrics-page.lyrics-enhanced {
   --lyrics-pointer-x: 0;
   --lyrics-pointer-y: 0;
