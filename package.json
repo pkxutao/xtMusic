@@ -1,7 +1,7 @@
 {
   "name": "xtmusic",
-  "version": "0.1.0",
-  "description": "A fast, security-conscious Windows desktop client for FNOS Music.",
+  "version": "0.2.0",
+  "description": "A fast, security-conscious Windows and Ubuntu desktop client for FNOS Music.",
   "main": "src/main/index.js",
   "type": "commonjs",
   "author": "pkxutao",
@@ -16,7 +16,10 @@
     "test": "node --test tests/*.test.js",
     "build": "npm run check && npm run check:syntax && npm run build:renderer && npm test",
     "dist:win": "npm run build && electron-builder --win --x64",
-    "pack:win": "npm run build && electron-builder --win dir --x64"
+    "pack:win": "npm run build && electron-builder --win dir --x64",
+    "dist:ubuntu": "npm run build && electron-builder --linux --x64",
+    "dist:ubuntu:arm64": "npm run build && electron-builder --linux --arm64",
+    "pack:ubuntu": "npm run build && electron-builder --linux dir --x64"
   },
   "dependencies": {
     "hls.js": "1.6.11"
@@ -59,6 +62,24 @@
         }
       ],
       "artifactName": "XT-Music-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "assets/app-icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "AudioVideo",
+      "maintainer": "pkxutao",
+      "vendor": "XT Music",
+      "executableName": "xtmusic",
+      "synopsis": "FNOS Music desktop client",
+      "description": "A fast and security-conscious FNOS Music desktop client for Ubuntu and Linux.",
+      "artifactName": "XT-Music-${version}-ubuntu-${arch}.${ext}"
+    },
+    "deb": {
+      "priority": "optional",
+      "packageCategory": "sound"
     },
     "nsis": {
       "oneClick": false,
