@@ -11,7 +11,18 @@ async function invoke(channel, payload) {
   throw error;
 }
 
+const sessionType = String(process.env.XDG_SESSION_TYPE || '').toLowerCase();
+const environment = Object.freeze({
+  platform: process.platform,
+  isLinux: process.platform === 'linux',
+  isWayland: process.platform === 'linux' && (
+    sessionType === 'wayland' || Boolean(process.env.WAYLAND_DISPLAY)
+  ),
+  sessionType
+});
+
 contextBridge.exposeInMainWorld('xtMusic', Object.freeze({
+  environment,
   bootstrap: () => invoke('app:bootstrap'),
   auth: Object.freeze({
     connect: (payload) => invoke('auth:connect', payload),
