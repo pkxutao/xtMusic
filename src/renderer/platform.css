@@ -1,0 +1,35 @@
+:root[data-platform="linux"] {
+  --font: "Ubuntu", "Noto Sans CJK SC", "Noto Sans SC", "Noto Sans", system-ui, sans-serif;
+  --titlebar-height: 48px;
+}
+
+:root[data-platform="linux"] .window-controls {
+  display: none;
+}
+
+:root[data-platform="linux"] .titlebar {
+  padding-right: 12px;
+  -webkit-app-region: no-drag;
+}
+
+:root[data-platform="linux"] .titlebar-drag-zone {
+  display: none;
+}
+
+:root[data-platform="linux"] .titlebar-account {
+  margin-right: 0;
+}
+
+:root[data-platform="linux"] .global-search-wrap kbd {
+  letter-spacing: 0.02em;
+}
+
+:root[data-platform="linux"][data-session-type="wayland"] .titlebar {
+  background: var(--bg);
+}
+
+:root[data-platform="linux"] select,
+:root[data-platform="linux"] input,
+:root[data-platform="linux"] button {
+  font-family: var(--font);
+}
