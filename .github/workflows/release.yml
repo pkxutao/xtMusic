@@ -4,12 +4,62 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - master
+    paths:
+      - "releases/v*.md"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: xtmusic-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - id: meta
+        name: Resolve release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v${VERSION}"
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid package version: $VERSION" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME}" != "$TAG" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package version $TAG" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE:-}" == "branch" ]]; then
+            test -f "releases/${TAG}.md" || {
+              echo "Missing release manifest: releases/${TAG}.md" >&2
+              exit 1
+            }
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
   build-windows:
+    needs: prepare
     runs-on: windows-latest
     timeout-minutes: 35
 
@@ -20,19 +70,20 @@ jobs:
         with:
           node-version: 22
 
-      - run: npm install --no-audit --no-fund
-      - run: npm run dist:win
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build Windows packages
+        run: npm run dist:win
 
       - uses: actions/upload-artifact@v4
         with:
-          name: release-windows
-          path: |
-            release/*.exe
-            release/*.blockmap
-            release/latest*.yml
+          name: release-windows-${{ needs.prepare.outputs.version }}
+          path: release/*.exe
           if-no-files-found: error
 
   build-ubuntu:
+    needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 35
 
@@ -43,34 +94,80 @@ jobs:
         with:
           node-version: 22
 
-      - run: npm install --no-audit --no-fund
-      - run: npm run dist:ubuntu
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build Ubuntu packages
+        run: npm run dist:ubuntu
 
       - uses: actions/upload-artifact@v4
         with:
-          name: release-ubuntu
+          name: release-ubuntu-${{ needs.prepare.outputs.version }}
           path: |
             release/*.AppImage
             release/*.deb
           if-no-files-found: error
 
   release:
-    needs: [build-windows, build-ubuntu]
+    needs: [prepare, build-windows, build-ubuntu]
     runs-on: ubuntu-24.04
 
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
-          pattern: release-*
+          pattern: release-*-${{ needs.prepare.outputs.version }}
           path: release
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - id: notes
+        name: Prepare release notes
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          NOTES="releases/${TAG}.md"
+          if [[ ! -f "$NOTES" ]]; then
+            mkdir -p releases
+            printf '# XT Music %s\n\nSee the generated changelog for details.\n' "$TAG" > "$NOTES"
+          fi
+          echo "path=$NOTES" >> "$GITHUB_OUTPUT"
+
+      - name: Generate build information and checksums
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cat > release/BUILD-INFO.txt <<EOF
+          Product: XT Music
+          Version: ${VERSION}
+          Tag: ${TAG}
+          Commit: ${GITHUB_SHA}
+          Built by: GitHub Actions
+          EOF
+
+          cd release
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' \
+            | sort -z \
+            | xargs -0 sha256sum > SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: XT Music ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ steps.notes.outputs.path }}
+          draft: false
+          prerelease: false
+          make_latest: true
           files: |
             release/*.exe
-            release/*.blockmap
-            release/latest*.yml
             release/*.AppImage
             release/*.deb
+            release/BUILD-INFO.txt
+            release/SHA256SUMS.txt
