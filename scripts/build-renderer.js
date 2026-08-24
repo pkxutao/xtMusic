@@ -26,7 +26,14 @@ esbuild.buildSync({
   }
 });
 
-for (const name of ['index.html', 'styles.css', 'platform.css', 'platform.js']) {
+for (const name of [
+  'index.html',
+  'styles.css',
+  'platform.css',
+  'platform.js',
+  'lyrics-experience.css',
+  'lyrics-experience.js'
+]) {
   fs.copyFileSync(
     path.join(root, 'src', 'renderer', name),
     path.join(outDir, name)
