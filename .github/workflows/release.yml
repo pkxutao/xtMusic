@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build-windows:
     runs-on: windows-latest
     timeout-minutes: 35
 
@@ -23,6 +23,48 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run dist:win
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+          if-no-files-found: error
+
+  build-ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install --no-audit --no-fund
+      - run: npm run dist:ubuntu
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-ubuntu
+          path: |
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
+
+  release:
+    needs: [build-windows, build-ubuntu]
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -30,3 +72,5 @@ jobs:
             release/*.exe
             release/*.blockmap
             release/latest*.yml
+            release/*.AppImage
+            release/*.deb
