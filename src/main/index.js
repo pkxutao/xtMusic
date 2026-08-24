@@ -19,6 +19,12 @@ const { Runtime } = require('./services/runtime');
 const { HlsRegistry } = require('./services/hls-registry');
 const { registerMediaProtocol } = require('./media-protocol');
 const { registerIpc } = require('./ipc');
+const {
+  getPlatformEnvironment,
+  getAppIconPath,
+  getTrayIconPath,
+  normalizeWindowBounds
+} = require('./platform');
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -35,7 +41,9 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 app.setName('XT Music');
-app.setAppUserModelId('com.pkxutao.xtmusic');
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.pkxutao.xtmusic');
+}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -46,6 +54,7 @@ if (!gotLock) {
 
 async function start() {
   const runtime = new Runtime();
+  const platformEnvironment = getPlatformEnvironment();
   let accountStore;
   let settingsStore;
   let sessionService;
@@ -82,7 +91,7 @@ async function start() {
     getMainWindow: () => runtime.mainWindow
   });
 
-  runtime.mainWindow = createMainWindow(settingsStore);
+  runtime.mainWindow = createMainWindow(settingsStore, platformEnvironment);
   runtime.rebuildTrayMenu = () => rebuildTray(runtime, () => {
     isQuitting = true;
     app.quit();
@@ -91,7 +100,7 @@ async function start() {
   runtime.rebuildTrayMenu();
 
   runtime.mainWindow.on('close', (event) => {
-    if (!isQuitting && settingsStore.get('closeToTray')) {
+    if (!isQuitting && runtime.tray && settingsStore.get('closeToTray')) {
       event.preventDefault();
       runtime.mainWindow.hide();
     }
@@ -124,32 +133,30 @@ async function start() {
 
   app.on('activate', () => {
     if (!runtime.mainWindow || runtime.mainWindow.isDestroyed()) {
-      runtime.mainWindow = createMainWindow(settingsStore);
+      runtime.mainWindow = createMainWindow(settingsStore, platformEnvironment);
     } else {
       runtime.mainWindow.show();
     }
   });
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin' && isQuitting) app.quit();
+    if (process.platform !== 'darwin') app.quit();
   });
 }
 
-function createMainWindow(settingsStore) {
+function createMainWindow(settingsStore, platformEnvironment = getPlatformEnvironment()) {
   const stored = settingsStore.get('windowBounds');
-  const bounds = validateBounds(stored);
+  const validated = validateBounds(stored, platformEnvironment);
+  const bounds = normalizeWindowBounds(validated || stored, platformEnvironment);
   const windowOptions = {
-    width: bounds?.width || 1440,
-    height: bounds?.height || 860,
-    x: bounds?.x,
-    y: bounds?.y,
+    ...bounds,
     minWidth: 1024,
     minHeight: 680,
     show: false,
-    frame: false,
-    thickFrame: true,
+    frame: platformEnvironment.nativeFrame,
+    autoHideMenuBar: true,
     backgroundColor: '#0b0d12',
-    icon: path.join(__dirname, '../../build/icon.ico'),
+    icon: getAppIconPath(),
     webPreferences: {
       preload: path.join(__dirname, '../preload.js'),
       contextIsolation: true,
@@ -162,6 +169,7 @@ function createMainWindow(settingsStore) {
   };
 
   if (process.platform === 'win32') {
+    windowOptions.thickFrame = true;
     windowOptions.backgroundMaterial = 'mica';
   }
 
@@ -186,21 +194,31 @@ function createMainWindow(settingsStore) {
 }
 
 function createTray(runtime) {
-  const imagePath = path.join(__dirname, '../../assets/tray.png');
-  let image = nativeImage.createFromPath(imagePath);
-  if (image.isEmpty()) image = nativeImage.createEmpty();
-  const tray = new Tray(image.resize({ width: 20, height: 20 }));
-  tray.setToolTip('XT Music');
-  tray.on('double-click', () => {
-    const win = runtime.mainWindow;
-    if (!win) return;
-    if (win.isVisible()) win.hide();
-    else {
-      win.show();
-      win.focus();
-    }
-  });
-  return tray;
+  try {
+    let image = nativeImage.createFromPath(getTrayIconPath());
+    if (image.isEmpty()) return null;
+    const size = process.platform === 'linux' ? 22 : 20;
+    image = image.resize({ width: size, height: size });
+    const tray = new Tray(image);
+    tray.setToolTip('XT Music');
+
+    const toggleWindow = () => {
+      const win = runtime.mainWindow;
+      if (!win) return;
+      if (win.isVisible()) win.hide();
+      else {
+        win.show();
+        win.focus();
+      }
+    };
+
+    if (process.platform === 'linux') tray.on('click', toggleWindow);
+    else tray.on('double-click', toggleWindow);
+    return tray;
+  } catch (error) {
+    console.warn(`[Tray] unavailable: ${error.message}`);
+    return null;
+  }
 }
 
 function rebuildTray(runtime, quit) {
@@ -251,8 +269,15 @@ function rebuildTray(runtime, quit) {
   );
 }
 
-function validateBounds(bounds) {
+function validateBounds(bounds, platformEnvironment = getPlatformEnvironment()) {
   if (!bounds || typeof bounds !== 'object') return null;
+  if (platformEnvironment.isWayland) {
+    return {
+      width: bounds.width,
+      height: bounds.height
+    };
+  }
+
   const displays = screen.getAllDisplays();
   const visible = displays.some((display) => {
     const area = display.workArea;
