@@ -26,7 +26,7 @@ esbuild.buildSync({
   }
 });
 
-for (const name of ['index.html', 'styles.css']) {
+for (const name of ['index.html', 'styles.css', 'platform.css', 'platform.js']) {
   fs.copyFileSync(
     path.join(root, 'src', 'renderer', name),
     path.join(outDir, name)
