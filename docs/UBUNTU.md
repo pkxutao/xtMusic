@@ -54,11 +54,14 @@ chmod +x XT-Music-*.AppImage
 ./XT-Music-*.AppImage
 ```
 
-部分精简系统运行 AppImage 时可能缺少 FUSE。可安装 `libfuse2`，或者直接使用 `.deb`：
+AppImage 使用 electron-builder 的静态 `1.0.3` runtime，不依赖已经弃用的 FUSE2。该 runtime 会检测系统是否支持非特权用户命名空间，仅在系统无法使用 Chromium 沙箱时才回退到 `--no-sandbox`。
 
-```bash
-sudo apt install libfuse2
-```
+## 构建工具链安全
+
+- Electron 固定为当前受支持的 `43.4.1`
+- electron-builder 固定为已修复 AppImage 搜索路径漏洞的 `26.15.7`
+- AppImage toolset 固定为静态 runtime `1.0.3`
+- 静态检查会阻止 electron-builder 降级到 `26.15.0` 以下，也会阻止恢复旧 AppImage runtime
 
 ## 密钥环与账号安全
 
@@ -97,7 +100,7 @@ Linux 使用 Electron StatusNotifierItem/GtkStatusIcon。托盘激活事件在�
 1. 安装固定版本依赖
 2. 静态安全检查
 3. JavaScript 语法检查
-4. 协议与平台单元测试
+4. 协议、平台和打包安全单元测试
 5. 构建 AppImage 和 deb
 6. 校验产物存在并输出 SHA-256
 7. 上传 `XT-Music-Ubuntu-x64` Artifact
