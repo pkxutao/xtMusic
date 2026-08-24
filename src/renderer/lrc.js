@@ -1,32 +1,54 @@
 export function parseLrc(text) {
   const lines = [];
   const metadata = {};
-  const source = String(text || '').replace(/\r/g, '');
-  for (const raw of source.split('\n')) {
-    const meta = raw.match(/^\[([a-zA-Z]+):([^\]]*)\]$/);
-    if (meta && !/^\d/.test(meta[1])) {
-      metadata[meta[1].toLowerCase()] = meta[2].trim();
+  const source = String(text || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/\r/g, '');
+
+  let offsetMs = 0;
+  for (const rawLine of source.split('\n')) {
+    const raw = rawLine.trimEnd();
+    const meta = raw.match(/^\[([a-zA-Z][\w-]*):([^\]]*)\]$/);
+    if (meta) {
+      const key = meta[1].toLowerCase();
+      const value = meta[2].trim();
+      metadata[key] = value;
+      if (key === 'offset') {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) offsetMs = parsed;
+      }
       continue;
     }
 
     const stamps = [...raw.matchAll(/\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g)];
     if (!stamps.length) continue;
-    const content = raw.replace(/\[[^\]]+\]/g, '').trim();
+
+    const content = raw
+      .replace(/\[(?:\d{1,3}):(\d{1,2})(?:[.:]\d{1,3})?\]/g, '')
+      .replace(/<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g, '')
+      .trim();
+
     for (const stamp of stamps) {
-      const minutes = Number(stamp[1]);
-      const seconds = Number(stamp[2]);
-      const fractionRaw = stamp[3] || '0';
-      const fraction = fractionRaw.length === 3
-        ? Number(fractionRaw) / 1000
-        : Number(fractionRaw) / (10 ** fractionRaw.length);
+      const time = timestampToSeconds(stamp[1], stamp[2], stamp[3]);
+      if (!Number.isFinite(time)) continue;
       lines.push({
-        time: minutes * 60 + seconds + fraction,
-        text: content || '♪'
+        time,
+        text: content || '\u00A0'
       });
     }
   }
+
+  const offsetSeconds = offsetMs / 1000;
+  for (const line of lines) line.time = Math.max(0, line.time + offsetSeconds);
   lines.sort((a, b) => a.time - b.time);
-  return { lines: dedupe(lines), metadata };
+
+  return {
+    lines: dedupe(lines),
+    metadata: {
+      ...metadata,
+      offsetMs
+    }
+  };
 }
 
 export function activeLyricIndex(lines, time) {
@@ -36,7 +58,7 @@ export function activeLyricIndex(lines, time) {
   let result = -1;
   while (low <= high) {
     const mid = (low + high) >> 1;
-    if (lines[mid].time <= time + 0.05) {
+    if (lines[mid].time <= time + 0.04) {
       result = mid;
       low = mid + 1;
     } else {
@@ -44,6 +66,15 @@ export function activeLyricIndex(lines, time) {
     }
   }
   return result;
+}
+
+function timestampToSeconds(minutesRaw, secondsRaw, fractionRaw = '0') {
+  const minutes = Number(minutesRaw);
+  const seconds = Number(secondsRaw);
+  if (!Number.isFinite(minutes) || !Number.isFinite(seconds) || seconds >= 60) return NaN;
+  const fractionText = String(fractionRaw || '0');
+  const fraction = Number(fractionText) / (10 ** fractionText.length);
+  return minutes * 60 + seconds + fraction;
 }
 
 function dedupe(lines) {
