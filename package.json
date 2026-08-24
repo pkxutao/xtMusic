@@ -1,6 +1,6 @@
 {
   "name": "xtmusic",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "A fast, security-conscious Windows and Ubuntu desktop client for FNOS Music.",
   "main": "src/main/index.js",
   "type": "commonjs",
@@ -85,7 +85,10 @@
     },
     "deb": {
       "priority": "optional",
-      "packageCategory": "sound"
+      "packageCategory": "sound",
+      "fpm": [
+        "--before-install=build/linux-before-install.sh"
+      ]
     },
     "nsis": {
       "oneClick": false,

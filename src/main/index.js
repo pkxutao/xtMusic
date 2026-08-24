@@ -45,7 +45,11 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.pkxutao.xtmusic');
 }
 
-const gotLock = app.requestSingleInstanceLock();
+const instanceData = {
+  version: app.getVersion(),
+  executablePath: process.execPath
+};
+const gotLock = app.requestSingleInstanceLock(instanceData);
 if (!gotLock) {
   app.quit();
 } else {
@@ -61,7 +65,24 @@ async function start() {
   let hlsRegistry;
   let isQuitting = false;
 
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
+    const incomingVersion = String(additionalData?.version || '');
+    const incomingExecutable = String(additionalData?.executablePath || '');
+    if (
+      incomingVersion &&
+      incomingVersion !== app.getVersion() &&
+      isTrustedUpgradeExecutable(incomingExecutable)
+    ) {
+      // The package was upgraded while an older tray process was still alive.
+      // Restart through the newly installed executable instead of focusing the
+      // stale process. The DEB pre-install hook handles upgrades from versions
+      // that predate this handshake.
+      isQuitting = true;
+      app.relaunch({ execPath: incomingExecutable, args: [] });
+      app.exit(0);
+      return;
+    }
+
     const win = runtime.mainWindow;
     if (!win) return;
     if (win.isMinimized()) win.restore();
@@ -150,6 +171,7 @@ function createMainWindow(settingsStore, platformEnvironment = getPlatformEnviro
   const bounds = normalizeWindowBounds(validated || stored, platformEnvironment);
   const windowOptions = {
     ...bounds,
+    title: `XT Music ${app.getVersion()}`,
     minWidth: 1024,
     minHeight: 680,
     show: false,
@@ -200,7 +222,7 @@ function createTray(runtime) {
     const size = process.platform === 'linux' ? 22 : 20;
     image = image.resize({ width: size, height: size });
     const tray = new Tray(image);
-    tray.setToolTip('XT Music');
+    tray.setToolTip(`XT Music ${app.getVersion()}`);
 
     const toggleWindow = () => {
       const win = runtime.mainWindow;
@@ -265,8 +287,18 @@ function rebuildTray(runtime, quit) {
   runtime.tray.setToolTip(
     player.title
       ? `${player.playing ? '正在播放' : '已暂停'}：${player.title}${player.artist ? ` · ${player.artist}` : ''}`
-      : 'XT Music'
+      : `XT Music ${app.getVersion()}`
   );
+}
+
+function isTrustedUpgradeExecutable(candidate) {
+  if (!candidate) return false;
+  const resolved = path.resolve(candidate);
+  if (resolved === path.resolve(process.execPath)) return true;
+  if (process.platform === 'linux') {
+    return resolved === '/opt/XT Music/xtmusic';
+  }
+  return false;
 }
 
 function validateBounds(bounds, platformEnvironment = getPlatformEnvironment()) {
