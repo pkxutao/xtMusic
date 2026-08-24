@@ -1,6 +1,6 @@
 {
   "name": "xtmusic",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A fast, security-conscious Windows and Ubuntu desktop client for FNOS Music.",
   "main": "src/main/index.js",
   "type": "commonjs",
