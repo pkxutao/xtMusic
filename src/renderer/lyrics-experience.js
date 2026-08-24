@@ -10,6 +10,14 @@
   let activePage = null;
   let progressRaf = 0;
   let lastProgressRead = 0;
+  const playbackClock = {
+    currentTime: 0,
+    duration: 0,
+    paused: true,
+    playbackRate: 1,
+    updatedAt: 0,
+    ready: false
+  };
 
   installScopedScrollIntoView();
 
@@ -28,6 +36,19 @@
     inspectContent(contentRoot);
 
     document.addEventListener('keydown', handleGlobalKeydown, true);
+    for (const eventName of [
+      'loadedmetadata',
+      'durationchange',
+      'timeupdate',
+      'seeking',
+      'seeked',
+      'play',
+      'pause',
+      'ratechange',
+      'emptied'
+    ]) {
+      document.addEventListener(eventName, syncPlaybackClock, true);
+    }
     progressRaf = requestAnimationFrame(updateProgressLoop);
   }
 
@@ -381,10 +402,18 @@
     const active = page.querySelector(`${LINE_SELECTOR}.is-active`);
     const progressInput = document.querySelector('#player-progress');
     const durationText = document.querySelector('#player-duration')?.textContent || '';
-    const duration = parseTime(durationText);
-    if (!active || !progressInput || !Number.isFinite(duration) || duration <= 0) return;
+    const fallbackDuration = parseTime(durationText);
+    const duration = playbackClock.ready && Number.isFinite(playbackClock.duration)
+      ? playbackClock.duration
+      : fallbackDuration;
+    if (!active || !Number.isFinite(duration) || duration <= 0) return;
 
-    const current = (Number(progressInput.value || 0) / 1000) * duration;
+    const fallbackCurrent = progressInput
+      ? (Number(progressInput.value || 0) / 1000) * duration
+      : 0;
+    const current = playbackClock.ready
+      ? currentClockTime(performance.now(), duration)
+      : fallbackCurrent;
     const lines = [...page.querySelectorAll(LINE_SELECTOR)];
     const index = lines.indexOf(active);
     const start = Number(active.dataset.lyricTime || 0);
@@ -397,6 +426,26 @@
 
     const time = page.querySelector('#lyrics-toolbar-time');
     if (time) time.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
+  }
+
+  function syncPlaybackClock(event) {
+    const media = event.target;
+    if (!(media instanceof HTMLMediaElement) || media.tagName !== 'AUDIO') return;
+
+    const duration = Number(media.duration);
+    playbackClock.currentTime = Number.isFinite(media.currentTime) ? media.currentTime : 0;
+    playbackClock.duration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+    playbackClock.paused = media.paused || event.type === 'pause' || event.type === 'emptied';
+    playbackClock.playbackRate = Number.isFinite(media.playbackRate) ? media.playbackRate : 1;
+    playbackClock.updatedAt = performance.now();
+    playbackClock.ready = event.type !== 'emptied';
+  }
+
+  function currentClockTime(now, duration) {
+    const elapsed = playbackClock.paused
+      ? 0
+      : Math.max(0, now - playbackClock.updatedAt) / 1000 * playbackClock.playbackRate;
+    return clamp(playbackClock.currentTime + elapsed, 0, duration);
   }
 
   function handleGlobalKeydown(event) {
