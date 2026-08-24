@@ -16,26 +16,57 @@ class FnDiscovery {
   }
 
   isFnId(value) {
-    const input = String(value || '').trim();
-    return Boolean(input) && !/^https?:\/\//i.test(input) && input.length >= 6;
+    return isValidFnId(normalizeFnId(value));
   }
 
   async resolve(input, options = {}, onProgress = () => {}) {
     const value = String(input || '').trim();
-    if (!value) throw new XtMusicError('SERVER_REQUIRED', '请输入服务器地址或 FNID');
+    if (!value) throw new XtMusicError('SERVER_REQUIRED', '请输入服务器地址或 FN ID');
 
     if (!this.isFnId(value)) {
       const candidates = buildDirectCandidates(value, options);
       return this.#probeCandidates(candidates, options, onProgress);
     }
 
+    const fnId = normalizeFnId(value);
+    const fallbackCandidates = buildFnIdFallbackCandidates(fnId);
+    let lookupError = null;
+    let candidates = [...fallbackCandidates];
+
     onProgress({ phase: 'discovery', message: '正在查询 FN Connect 地址…' });
-    const params = await this.fetchParams(value);
-    const candidates = buildFnCandidates(value, params, options);
-    if (!candidates.length) {
-      throw new XtMusicError('NO_CANDIDATES', 'FN Connect 没有返回可用地址');
+    try {
+      const params = await this.fetchParams(fnId);
+      candidates = dedupe([
+        ...buildFnCandidates(fnId, params, options),
+        ...fallbackCandidates
+      ]).sort((a, b) => a.priority - b.priority);
+    } catch (error) {
+      lookupError = error;
+      onProgress({
+        phase: 'discovery-fallback',
+        message: 'FN Connect 查询失败，正在尝试 FNOS 域名…'
+      });
     }
-    return this.#probeCandidates(candidates, options, onProgress, value);
+
+    if (!candidates.length) {
+      throw lookupError || new XtMusicError('NO_CANDIDATES', 'FN Connect 没有返回可用地址');
+    }
+
+    try {
+      return await this.#probeCandidates(candidates, options, onProgress, fnId);
+    } catch (error) {
+      if (lookupError && error?.code === 'NO_REACHABLE_SERVER') {
+        throw new XtMusicError(
+          'FNID_CONNECT_FAILED',
+          `FN ID 查询失败（${lookupError.message}），FNOS 域名也无法连接`,
+          {
+            lookupError: lookupError.message,
+            diagnostics: error.details?.diagnostics || []
+          }
+        );
+      }
+      throw error;
+    }
   }
 
   async fetchParams(fnId) {
@@ -53,7 +84,7 @@ class FnDiscovery {
     if (payload.code !== 0 || !payload.data) {
       throw new XtMusicError(
         'FNID_LOOKUP_FAILED',
-        payload.msg || 'FNID 查询失败，请检查输入'
+        payload.msg || 'FN ID 查询失败，请检查输入'
       );
     }
     return normalizeParams(payload.data);
@@ -66,15 +97,16 @@ class FnDiscovery {
       onProgress({
         phase: 'probe',
         message: `正在探测${group[0].groupLabel}链路…`,
-        candidates: group.map((item) => item.url)
+        candidates: group.map((item) => item.probeUrl || item.url)
       });
       const results = await Promise.all(
         group.map(async (candidate) => {
           const startedAt = Date.now();
           try {
-            await probeOne(this.transport, candidate, options);
+            const probe = await probeOne(this.transport, candidate, options);
             return {
               ...candidate,
+              ...probe,
               reachable: true,
               elapsedMs: Date.now() - startedAt,
               error: null
@@ -93,13 +125,14 @@ class FnDiscovery {
       diagnostics.push(...results);
       const winner = results.find((item) => item.reachable);
       if (winner) {
+        const serverUrl = normalizeServiceUrl(winner.resolvedUrl || winner.url);
         onProgress({
           phase: 'connected',
           message: `已连接：${winner.label}`,
-          candidate: winner.url
+          candidate: serverUrl
         });
         return {
-          serverUrl: stripTrailingSlash(winner.url),
+          serverUrl,
           relayMode: winner.relayMode,
           method: winner.label,
           fnId,
@@ -116,11 +149,12 @@ class FnDiscovery {
 }
 
 async function probeOne(transport, candidate, options) {
-  const response = await transport.requestBuffer(`${stripTrailingSlash(candidate.url)}/`, {
+  const probeUrl = candidate.probeUrl || `${stripTrailingSlash(candidate.url)}/`;
+  const response = await transport.requestBuffer(probeUrl, {
     method: 'GET',
     headers: candidate.relayMode ? { Cookie: 'mode=relay' } : {},
     timeoutMs: candidate.relayMode ? 10000 : 3500,
-    allowHttp: candidate.url.startsWith('http://') && Boolean(options.allowHttp),
+    allowHttp: probeUrl.startsWith('http://') && Boolean(options.allowHttp),
     allowSelfSigned: Boolean(options.allowSelfSigned),
     maxRedirects: 2,
     maxBytes: 256 * 1024
@@ -128,6 +162,7 @@ async function probeOne(transport, candidate, options) {
   if (response.statusCode >= 500) {
     throw new XtMusicError('SERVER_UNAVAILABLE', `服务器返回 HTTP ${response.statusCode}`);
   }
+  return { resolvedUrl: response.url || probeUrl };
 }
 
 function buildFnCandidates(fnId, params, options = {}) {
@@ -164,19 +199,46 @@ function buildFnCandidates(fnId, params, options = {}) {
     ? params.relayAddresses
     : [`${normalizeFnId(fnId)}.5ddd.com`];
   for (const raw of relayAddresses) {
-    const withoutScheme = raw.replace(/^https?:\/\//i, '');
-    const host = withoutScheme.replace(/:\d+$/, '');
+    const relay = normalizeRelayUrl(raw);
+    if (!relay) continue;
+    const parsed = new URL(relay);
     rows.push({
-      url: `https://${host}`,
+      url: relay,
       relayMode: true,
       group: '中继',
       groupLabel: '中继',
       priority: 40,
-      label: `FN Connect 中继 · ${host}`
+      label: `FN Connect 中继 · ${parsed.host}`
     });
   }
 
   return dedupe(rows).sort((a, b) => a.priority - b.priority);
+}
+
+function buildFnIdFallbackCandidates(fnId) {
+  const normalized = normalizeFnId(fnId);
+  if (!isValidFnId(normalized)) return [];
+  const encoded = encodeURIComponent(normalized);
+  return [
+    {
+      url: `https://${normalized}.fnos.net`,
+      probeUrl: `https://${normalized}.fnos.net/music/`,
+      relayMode: true,
+      group: 'FNOS 域名',
+      groupLabel: 'FNOS 域名',
+      priority: 35,
+      label: `FN Connect 域名 · ${normalized}.fnos.net`
+    },
+    {
+      url: `https://fnos.net/${encoded}`,
+      probeUrl: `https://fnos.net/${encoded}/music/`,
+      relayMode: true,
+      group: 'FNOS 路径',
+      groupLabel: 'FNOS 路径',
+      priority: 36,
+      label: `FN Connect 路径 · fnos.net/${normalized}`
+    }
+  ];
 }
 
 function buildDirectCandidates(input, options = {}) {
@@ -186,7 +248,7 @@ function buildDirectCandidates(input, options = {}) {
   } catch {
     throw new XtMusicError(
       'INVALID_URL',
-      '服务器地址应以 http:// 或 https:// 开头；也可以直接输入 FNID'
+      '服务器地址应以 http:// 或 https:// 开头；也可以直接输入 FN ID'
     );
   }
   if (!['http:', 'https:'].includes(parsed.protocol)) {
@@ -197,16 +259,18 @@ function buildDirectCandidates(input, options = {}) {
   }
 
   const base = stripTrailingSlash(parsed.toString());
+  const fnConnectHost = isFnConnectHost(parsed.hostname);
   const rows = [{
     url: base,
-    relayMode: parsed.hostname.endsWith('.5ddd.com'),
+    probeUrl: `${base}/`,
+    relayMode: fnConnectHost,
     group: '指定地址',
     groupLabel: '指定地址',
     priority: 0,
     label: `指定地址 · ${parsed.host}`
   }];
 
-  if (!parsed.port) {
+  if (!parsed.port && !fnConnectHost && parsed.pathname === '/') {
     const host = parsed.hostname.includes(':') ? `[${parsed.hostname}]` : parsed.hostname;
     if (parsed.protocol === 'https:') {
       rows.push({
@@ -272,11 +336,80 @@ function md5(value) {
 }
 
 function normalizeFnId(value) {
-  return String(value || '')
-    .trim()
+  const input = String(value || '').trim();
+  if (!input) return '';
+
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`);
+    const host = parsed.hostname.toLowerCase();
+    if (host.endsWith('.5ddd.com') || host.endsWith('.fnos.net')) {
+      return host.split('.')[0];
+    }
+    if (host === '5ddd.com' || host === 'fnos.net') {
+      return parsed.pathname.split('/').filter(Boolean)[0] || '';
+    }
+  } catch {
+    // Fall through to plain-ID cleanup.
+  }
+
+  return input
     .replace(/^https?:\/\//i, '')
-    .replace(/\.5ddd\.com(?::\d+)?\/?$/i, '')
-    .replace(/\/+$/, '');
+    .replace(/(?:\.5ddd\.com|\.fnos\.net)(?::\d+)?(?:\/.*)?$/i, '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+}
+
+function isValidFnId(value) {
+  const id = String(value || '').trim();
+  return id.length >= 1 && id.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(id);
+}
+
+function isFnConnectHost(host) {
+  const lower = String(host || '').toLowerCase();
+  return (
+    lower === '5ddd.com' ||
+    lower.endsWith('.5ddd.com') ||
+    lower === 'fnos.net' ||
+    lower.endsWith('.fnos.net')
+  );
+}
+
+function normalizeServiceUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(String(value));
+  } catch {
+    throw new XtMusicError('INVALID_URL', '服务器地址格式不正确');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new XtMusicError('INVALID_URL', '服务器地址仅支持 HTTP/HTTPS');
+  }
+
+  parsed.search = '';
+  parsed.hash = '';
+  let pathname = parsed.pathname.replace(/\/{2,}/g, '/');
+  pathname = pathname.replace(/\/music\/api\/v1(?:\/.*)?$/i, '');
+  pathname = pathname.replace(/\/music\/?$/i, '');
+  pathname = pathname.replace(/\/+$/, '');
+  parsed.pathname = pathname || '/';
+  return parsed.toString().replace(/\/+$/, '');
+}
+
+function normalizeRelayUrl(value) {
+  const input = String(value || '').trim();
+  if (!input) return null;
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    parsed.protocol = 'https:';
+    parsed.username = '';
+    parsed.password = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return stripTrailingSlash(parsed.toString());
+  } catch {
+    return null;
+  }
 }
 
 function isPrivateHost(host) {
@@ -308,8 +441,9 @@ function groupByPriority(rows) {
 function dedupe(rows) {
   const seen = new Set();
   return rows.filter((row) => {
-    if (seen.has(row.url)) return false;
-    seen.add(row.url);
+    const key = `${row.url}|${row.probeUrl || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
@@ -333,9 +467,13 @@ module.exports = {
   FnDiscovery,
   computeAuthx,
   buildFnCandidates,
+  buildFnIdFallbackCandidates,
   buildDirectCandidates,
   normalizeFnId,
+  normalizeServiceUrl,
   normalizeParams,
+  isValidFnId,
+  isFnConnectHost,
   isPrivateHost,
   _constants: { AUTHX_PREFIX, API_KEY, FN_API_PATH, FN_API_URL }
 };
