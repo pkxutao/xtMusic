@@ -7,12 +7,15 @@ const root = path.resolve(__dirname, '..');
 const required = [
   'src/main/index.js',
   'src/main/ipc.js',
+  'src/main/platform.js',
   'src/main/protocol/feiniu-client.js',
   'src/main/protocol/fn-discovery.js',
   'src/preload.js',
   'src/renderer/app.js',
   'src/renderer/index.html',
-  'src/renderer/styles.css'
+  'src/renderer/styles.css',
+  'src/renderer/platform.css',
+  'src/renderer/platform.js'
 ];
 
 let failed = false;
