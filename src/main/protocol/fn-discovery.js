@@ -16,7 +16,12 @@ class FnDiscovery {
   }
 
   isFnId(value) {
-    return isValidFnId(normalizeFnId(value));
+    const input = String(value || '').trim();
+    // An explicit HTTP(S) URL is an exact server address, not an FN ID.
+    // Normalizing a URL first would turn https://<id>.fnos.net into <id>
+    // and silently ignore the address the user entered.
+    if (!input || /^https?:\/\//i.test(input)) return false;
+    return isValidFnId(input);
   }
 
   async resolve(input, options = {}, onProgress = () => {}) {
@@ -125,7 +130,7 @@ class FnDiscovery {
       diagnostics.push(...results);
       const winner = results.find((item) => item.reachable);
       if (winner) {
-        const serverUrl = normalizeServiceUrl(winner.resolvedUrl || winner.url);
+        const serverUrl = normalizeServiceUrl(winner.url);
         onProgress({
           phase: 'connected',
           message: `已连接：${winner.label}`,

@@ -202,14 +202,22 @@ function hasHeader(headers, name) {
   return Object.keys(headers || {}).some((key) => key.toLowerCase() === name.toLowerCase());
 }
 
+function isOfficialFnRelayHost(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  return (
+    host === '5ddd.com' ||
+    host.endsWith('.5ddd.com') ||
+    host === 'fnos.net' ||
+    host.endsWith('.fnos.net')
+  );
+}
+
 function defaultTrustedRedirect(from, to) {
-  const a = from.hostname.toLowerCase();
-  const b = to.hostname.toLowerCase();
   return (
     from.protocol === 'https:' &&
     to.protocol === 'https:' &&
-    a.endsWith('.5ddd.com') &&
-    b.endsWith('.5ddd.com')
+    isOfficialFnRelayHost(from.hostname) &&
+    isOfficialFnRelayHost(to.hostname)
   );
 }
 
@@ -240,5 +248,5 @@ module.exports = {
   HttpTransport,
   defaultTrustedRedirect,
   mapNetworkError,
-  _internals: { normalizeBody, normalizeHeaders, hasHeader }
+  _internals: { normalizeBody, normalizeHeaders, hasHeader, isOfficialFnRelayHost }
 };

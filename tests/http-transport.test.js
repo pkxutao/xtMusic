@@ -3,7 +3,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { HttpTransport } = require('../src/main/protocol/http-transport');
+const {
+  HttpTransport,
+  defaultTrustedRedirect,
+  _internals
+} = require('../src/main/protocol/http-transport');
 
 async function listen(handler) {
   const server = http.createServer(handler);
@@ -84,4 +88,34 @@ test('same-origin redirects keep the NAS session cookie', async (t) => {
 
   assert.deepEqual(response.data, { ok: true });
   assert.equal(receivedCookie, 'music-token=session-token');
+});
+
+test('HTTPS redirects within official FN relay domains keep relay credentials', () => {
+  const pairs = [
+    ['https://pkxutao.fnos.net/music/', 'https://pkxutao.5ddd.com/music/'],
+    ['https://pkxutao.5ddd.com/music/', 'https://fnos.net/pkxutao/music/'],
+    ['https://fnos.net/pkxutao/music/', 'https://gateway.fnos.net/music/']
+  ];
+  for (const [from, to] of pairs) {
+    assert.equal(defaultTrustedRedirect(new URL(from), new URL(to)), true, `${from} -> ${to}`);
+  }
+});
+
+test('relay credential trust never extends outside HTTPS official FN domains', () => {
+  assert.equal(
+    defaultTrustedRedirect(
+      new URL('https://pkxutao.fnos.net/music/'),
+      new URL('https://attacker.example/collect')
+    ),
+    false
+  );
+  assert.equal(
+    defaultTrustedRedirect(
+      new URL('https://pkxutao.fnos.net/music/'),
+      new URL('http://pkxutao.5ddd.com/music/')
+    ),
+    false
+  );
+  assert.equal(_internals.isOfficialFnRelayHost('fakefnos.net'), false);
+  assert.equal(_internals.isOfficialFnRelayHost('fnos.net.attacker.example'), false);
 });
