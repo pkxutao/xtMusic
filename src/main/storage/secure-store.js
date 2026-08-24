@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { safeStorage } = require('electron');
 const { JsonStore } = require('./json-store');
+const { getSecureStorageStatus } = require('../platform');
 
 class SecureAccountStore {
   constructor(userDataPath) {
@@ -15,14 +16,19 @@ class SecureAccountStore {
     this.ephemeralSecrets = new Map();
   }
 
+  storageStatus() {
+    return getSecureStorageStatus(safeStorage);
+  }
+
   encryptionAvailable() {
-    return safeStorage.isEncryptionAvailable();
+    return this.storageStatus().secure;
   }
 
   list() {
+    const secureStorageAvailable = this.encryptionAvailable();
     return this.store.get('accounts', []).map(({ secret, ...profile }) => ({
       ...profile,
-      hasSession: Boolean(secret) || this.ephemeralSecrets.has(profile.id)
+      hasSession: (secureStorageAvailable && Boolean(secret)) || this.ephemeralSecrets.has(profile.id)
     }));
   }
 
@@ -34,7 +40,10 @@ class SecureAccountStore {
     const row = this.store.get('accounts', []).find((item) => item.id === id);
     if (!row) return null;
     const { secret, ...profile } = row;
-    return { ...profile, hasSession: Boolean(secret) || this.ephemeralSecrets.has(id) };
+    return {
+      ...profile,
+      hasSession: (this.encryptionAvailable() && Boolean(secret)) || this.ephemeralSecrets.has(id)
+    };
   }
 
   getActiveProfile() {
@@ -46,8 +55,10 @@ class SecureAccountStore {
     if (this.ephemeralSecrets.has(id)) {
       return structuredClone(this.ephemeralSecrets.get(id));
     }
+
     const row = this.store.get('accounts', []).find((item) => item.id === id);
-    if (!row?.secret || !safeStorage.isEncryptionAvailable()) return null;
+    if (!row?.secret || !this.encryptionAvailable()) return null;
+
     try {
       const decrypted = safeStorage.decryptString(Buffer.from(row.secret, 'base64'));
       return JSON.parse(decrypted);
@@ -78,7 +89,7 @@ class SecureAccountStore {
     };
 
     if (secret) {
-      if (rememberSession && safeStorage.isEncryptionAvailable()) {
+      if (rememberSession && this.encryptionAvailable()) {
         normalized.secret = safeStorage
           .encryptString(JSON.stringify(secret))
           .toString('base64');
