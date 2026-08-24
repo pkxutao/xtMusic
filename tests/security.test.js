@@ -37,6 +37,14 @@ test('source contains no analytics or remote reporting SDK', () => {
   }
 });
 
+test('Linux packages use patched builder and static AppImage runtime', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.devDependencies['electron-builder'], '26.15.7');
+  assert.equal(pkg.devDependencies.electron, '43.4.1');
+  assert.equal(pkg.build.toolsets.appimage, '1.0.3');
+  assert.equal(pkg.build.appImage.compression, 'zstd');
+});
+
 function walk(dir) {
   const result = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
