@@ -1,0 +1,128 @@
+name: Native Promotion Gate v2
+
+on:
+  workflow_run:
+    workflows:
+      - Native Windows v2
+      - Native Ubuntu v2
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: xtmusic-native-promotion-v2
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: >-
+      github.event.workflow_run.head_branch == 'feat/native-rust-egui-0.3.0' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Require both robust native builds, merge and release
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = 'feat/native-rust-egui-0.3.0';
+
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({ owner, repo, tag: 'v0.3.0' });
+              if (existing.data && !existing.data.draft) {
+                core.info('v0.3.0 already exists; nothing to promote.');
+                return;
+              }
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
+            const branchRef = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
+            const headSha = branchRef.data.object.sha;
+
+            async function successfulRun(workflowId) {
+              const response = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: workflowId,
+                branch,
+                per_page: 50,
+              });
+              return response.data.workflow_runs.find(run =>
+                run.head_sha === headSha &&
+                run.status === 'completed' &&
+                run.conclusion === 'success'
+              );
+            }
+
+            const windows = await successfulRun('native-windows-v2.yml');
+            const ubuntu = await successfulRun('native-ubuntu-v2.yml');
+            if (!windows || !ubuntu) {
+              core.info(`Waiting for both v2 builds on ${headSha}`);
+              return;
+            }
+
+            const pulls = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              base: 'master',
+              head: `${owner}:${branch}`,
+              per_page: 10,
+            });
+            const pr = pulls.data[0];
+            if (!pr) {
+              core.info('Native PR is already merged or closed; checking master.');
+            } else {
+              if (pr.head.sha !== headSha) throw new Error('PR head changed during promotion');
+              const merged = await github.rest.pulls.merge({
+                owner,
+                repo,
+                pull_number: pr.number,
+                sha: headSha,
+                merge_method: 'merge',
+                commit_title: 'feat: release XT Music 0.3.0 pure native Rust client',
+                commit_message: 'Merge after successful Native Windows v2 and Native Ubuntu v2 builds for the same commit.',
+              });
+              if (!merged.data.merged) throw new Error(merged.data.message || 'Native PR merge failed');
+            }
+
+            const masterRef = await github.rest.git.getRef({ owner, repo, ref: 'heads/master' });
+            const mergeSha = masterRef.data.object.sha;
+            try {
+              await github.rest.git.updateRef({ owner, repo, ref: 'heads/main', sha: mergeSha, force: true });
+            } catch (error) {
+              if (error.status === 422) {
+                await github.rest.git.createRef({ owner, repo, ref: 'refs/heads/main', sha: mergeSha });
+              } else {
+                throw error;
+              }
+            }
+
+            try {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: 11,
+                body: '已由不含 Tauri/WebView 的纯 Rust egui 原生实现替代。',
+              });
+              await github.rest.pulls.update({ owner, repo, pull_number: 11, state: 'closed' });
+            } catch (error) {
+              core.info(`Old PR cleanup skipped: ${error.message}`);
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner,
+              repo,
+              workflow_id: 'native-release-v2.yml',
+              ref: 'master',
+              inputs: { ref: mergeSha },
+            });
+            core.notice(`Native v0.3.0 release dispatched from ${mergeSha}`);
