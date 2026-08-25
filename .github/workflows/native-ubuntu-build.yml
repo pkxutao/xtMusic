@@ -1,0 +1,70 @@
+name: Native Ubuntu Build
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "native/**"
+      - ".github/workflows/native-ubuntu-build.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "native/**"
+      - ".github/workflows/native-ubuntu-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libgtk-3-dev libasound2-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libgl1-mesa-dev libssl-dev fonts-noto-cjk
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85.0"
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path native/Cargo.toml -- --check
+
+      - name: Rust tests
+        run: cargo test --manifest-path native/Cargo.toml
+
+      - name: Build release binary
+        run: cargo build --release --manifest-path native/Cargo.toml
+
+      - name: Build DEB and portable archive
+        run: bash native/installer/package-linux.sh 0.3.0 amd64
+
+      - name: Inspect packages
+        run: |
+          file native/target/release/xtmusic
+          dpkg-deb --info native/dist/*.deb
+          sha256sum -c native/dist/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Native-Ubuntu-x64
+          path: |
+            native/dist/*.deb
+            native/dist/*.tar.gz
+            native/dist/SHA256SUMS.txt
+          if-no-files-found: error
