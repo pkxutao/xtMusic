@@ -1,0 +1,104 @@
+name: Native Rust Build
+
+on:
+  push:
+    branches:
+      - native/rust-iced
+    paths:
+      - "native/**"
+      - ".github/workflows/native-build.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - ".github/workflows/native-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libasound2-dev \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libx11-xcb-dev
+      - name: Format native source
+        working-directory: native
+        run: cargo fmt --all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xtmusic-native-formatted-source
+          path: native
+          include-hidden-files: true
+      - name: Test core
+        working-directory: native
+        run: cargo test -p xtmusic-core --all-features
+      - name: Clippy
+        working-directory: native
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  build-ubuntu:
+    name: Ubuntu native binary
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libasound2-dev \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libx11-xcb-dev
+      - name: Build
+        working-directory: native
+        run: cargo build --release -p xtmusic-native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xtmusic-native-ubuntu-x64
+          path: native/target/release/xtmusic-native
+          if-no-files-found: error
+
+  build-windows:
+    name: Windows native binary
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Build
+        working-directory: native
+        run: cargo build --release -p xtmusic-native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xtmusic-native-windows-x64
+          path: native/target/release/xtmusic-native.exe
+          if-no-files-found: error
