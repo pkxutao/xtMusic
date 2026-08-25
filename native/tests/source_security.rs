@@ -26,8 +26,16 @@ fn runtime_has_no_webview_or_electron_dependency() {
 fn password_is_not_serializable_or_persisted() {
     let model = read(root().join("src/model.rs"));
     let storage = read(root().join("src/storage.rs"));
-    assert!(!storage.contains("password:"));
-    assert!(!storage.contains("password\""));
+    let production_storage = storage
+        .split("#[cfg(test)]")
+        .next()
+        .expect("storage production source must exist");
+
+    // Keyring APIs legitimately contain names such as set_password/get_password.
+    // Reject actual persisted password fields or JSON keys instead of matching
+    // the test module's own security assertions.
+    assert!(!production_storage.contains("password:"));
+    assert!(!production_storage.contains("\"password\""));
     assert!(model.contains("pub password: String"));
     assert!(
         !model.contains("struct LoginRequest")
