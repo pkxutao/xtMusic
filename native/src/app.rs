@@ -443,7 +443,7 @@ impl XtMusicApp {
     fn cover(&mut self, ui: &mut egui::Ui, cover_id: Option<&str>, size: f32) {
         if let Some(id) = cover_id {
             if let Some(texture) = self.covers.get(id) {
-                ui.add(egui::Image::new((texture.id(), Vec2::splat(size))).corner_radius(8.0));
+                ui.add(egui::Image::new((texture.id(), Vec2::splat(size))).corner_radius(egui::CornerRadius::same(8)));
                 return;
             }
             self.request_cover(id, size.max(64.0) as usize * 2);
@@ -501,7 +501,7 @@ impl XtMusicApp {
                     Frame::default()
                         .fill(PANEL_DARK)
                         .stroke(Stroke::new(1.0, Color32::from_gray(48)))
-                        .corner_radius(14.0)
+                        .corner_radius(egui::CornerRadius::same(14))
                         .inner_margin(24)
                         .show(ui, |ui| {
                             ui.set_width(430.0);
@@ -558,7 +558,7 @@ impl XtMusicApp {
                                 ui.add_space(8.0);
                                 Frame::default()
                                     .fill(Color32::from_rgb(56, 27, 32))
-                                    .corner_radius(8.0)
+                                    .corner_radius(egui::CornerRadius::same(8))
                                     .inner_margin(10)
                                     .show(ui, |ui| {
                                         ui.colored_label(Color32::from_rgb(255, 150, 160), error);
@@ -840,7 +840,7 @@ impl XtMusicApp {
                     for album in chunk {
                         Frame::default()
                             .fill(PANEL_DARK)
-                            .corner_radius(10.0)
+                            .corner_radius(egui::CornerRadius::same(10))
                             .inner_margin(10)
                             .show(ui, |ui| {
                                 ui.set_width(150.0);
@@ -926,7 +926,7 @@ impl XtMusicApp {
             for playlist in playlists {
                 Frame::default()
                     .fill(PANEL_DARK)
-                    .corner_radius(9.0)
+                    .corner_radius(egui::CornerRadius::same(9))
                     .inner_margin(10)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -982,7 +982,7 @@ impl XtMusicApp {
         page_heading(ui, "设置", "XT Music Native 0.3.0");
         Frame::default()
             .fill(PANEL_DARK)
-            .corner_radius(10.0)
+            .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(16)
             .show(ui, |ui| {
                 ui.heading("播放");
@@ -1005,7 +1005,7 @@ impl XtMusicApp {
         ui.add_space(12.0);
         Frame::default()
             .fill(PANEL_DARK)
-            .corner_radius(10.0)
+            .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(16)
             .show(ui, |ui| {
                 ui.heading("隐私与安全");
@@ -1017,7 +1017,7 @@ impl XtMusicApp {
         ui.add_space(12.0);
         Frame::default()
             .fill(PANEL_DARK)
-            .corner_radius(10.0)
+            .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(16)
             .show(ui, |ui| {
                 ui.heading("运行时");
@@ -1134,7 +1134,7 @@ impl XtMusicApp {
                 Layout::top_down(Align::Center),
                 |ui| {
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.shuffle, !self.shuffle, "随机");
+                        if ui.selectable_label(self.shuffle, "随机").clicked() { self.shuffle = !self.shuffle; }
                         if ui.button("⏮").clicked() {
                             self.previous_track();
                         }
@@ -1318,7 +1318,7 @@ impl XtMusicApp {
                     for profile in profiles {
                         Frame::default()
                             .fill(SOFT_DARK)
-                            .corner_radius(8.0)
+                            .corner_radius(egui::CornerRadius::same(8))
                             .inner_margin(10)
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
@@ -1421,7 +1421,7 @@ impl XtMusicApp {
                         } else {
                             Color32::from_rgb(31, 55, 48)
                         })
-                        .corner_radius(8.0)
+                        .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(12)
                         .show(ui, |ui| {
                             ui.label(&toast.text);
