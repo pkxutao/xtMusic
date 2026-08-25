@@ -1,0 +1,75 @@
+name: Native Toolchain Fix
+
+on:
+  push:
+    branches:
+      - feat/native-rust-egui-0.3.0
+    paths:
+      - ".github/workflows/native-toolchain-fix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/native-rust-egui-0.3.0
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88.0"
+          components: rustfmt
+
+      - name: Align toolchain and deterministic Cargo commands
+        shell: python
+        run: |
+          from pathlib import Path
+
+          cargo = Path("native/Cargo.toml")
+          text = cargo.read_text(encoding="utf-8")
+          text = text.replace('rust-version = "1.85"', 'rust-version = "1.88"')
+          cargo.write_text(text, encoding="utf-8")
+
+          for path in sorted(Path(".github/workflows").glob("native-*.yml")):
+              text = path.read_text(encoding="utf-8")
+              text = text.replace('toolchain: "1.85.0"', 'toolchain: "1.88.0"')
+              text = text.replace(
+                  'cargo test --manifest-path native/Cargo.toml',
+                  'cargo test --locked --manifest-path native/Cargo.toml'
+              )
+              text = text.replace(
+                  'cargo build --release --manifest-path native/Cargo.toml',
+                  'cargo build --release --locked --manifest-path native/Cargo.toml'
+              )
+              text = text.replace(
+                  'cargo check --manifest-path native/Cargo.toml',
+                  'cargo check --locked --manifest-path native/Cargo.toml'
+              )
+              path.write_text(text, encoding="utf-8")
+
+      - name: Generate and verify dependency lock
+        run: |
+          cargo generate-lockfile --manifest-path native/Cargo.toml
+          cargo fmt --manifest-path native/Cargo.toml
+          cargo fmt --manifest-path native/Cargo.toml -- --check
+
+      - name: Commit normalized toolchain and lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/native-*.yml native/Cargo.toml native/Cargo.lock native/src native/tests
+          if git diff --cached --quiet; then
+            echo "No toolchain changes required."
+            exit 0
+          fi
+          git commit -m "build(native): pin Rust 1.88 and lock dependencies"
+          git push origin HEAD:feat/native-rust-egui-0.3.0
