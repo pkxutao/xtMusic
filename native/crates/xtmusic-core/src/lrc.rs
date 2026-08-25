@@ -87,13 +87,13 @@ fn strip_word_timestamps(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'<' {
-            if let Some(relative) = value[index + 1..].find('>') {
-                let end = index + 1 + relative;
-                if parse_timestamp(&value[index + 1..end]).is_some() {
-                    index = end + 1;
-                    continue;
-                }
+        if bytes[index] == b'<'
+            && let Some(relative) = value[index + 1..].find('>')
+        {
+            let end = index + 1 + relative;
+            if parse_timestamp(&value[index + 1..end]).is_some() {
+                index = end + 1;
+                continue;
             }
         }
         let ch = value[index..].chars().next().unwrap_or_default();
