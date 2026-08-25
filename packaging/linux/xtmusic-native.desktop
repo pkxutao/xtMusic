@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=XT Music Native
+Comment=Native Rust client for FNOS Music
+Exec=xtmusic
+Icon=xtmusic-native
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+StartupNotify=true
+StartupWMClass=xtmusic
