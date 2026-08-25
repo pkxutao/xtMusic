@@ -1,9 +1,19 @@
-name: Windows Build
+name: Windows Native Build
 
 on:
   push:
-    branches: [main, master]
+    branches:
+      - feat/native-rust-egui-0.3.0
   pull_request:
+    branches:
+      - master
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'native-src/**'
+      - 'packaging/windows/**'
+      - '.github/workflows/windows-build.yml'
   workflow_dispatch:
 
 permissions:
@@ -12,32 +22,49 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: 22
+          components: rustfmt, clippy
 
-      - name: Install dependencies
-        # The source package currently omits a generated lockfile, so CI uses
-        # npm install rather than npm ci. Dependency versions are pinned exactly.
-        run: npm install --no-audit --no-fund
-
-      - name: Check and test
-        run: npm run build
-
-      - name: Build Windows packages
-        run: npm run dist:win
-
-      - name: Upload packages
-        uses: actions/upload-artifact@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          name: XT-Music-Windows
-          path: |
-            release/*.exe
-            release/*.blockmap
-            release/latest*.yml
+          shared-key: xtmusic-native-windows
+
+      - name: Verify source is native
+        shell: pwsh
+        run: |
+          if (Test-Path src-tauri) { throw 'Tauri source must not be used by the native build' }
+          if (Select-String -Path Cargo.toml -Pattern 'tauri|wry|webview' -Quiet) { throw 'WebView dependency detected' }
+
+      - name: Format and test
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Install NSIS
+        run: choco install nsis --yes --no-progress
+
+      - name: Package Windows artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item target/release/xtmusic.exe release/XT-Music-Native-0.3.0-Windows-x64.exe
+          Compress-Archive -Path target/release/xtmusic.exe -DestinationPath release/XT-Music-Native-0.3.0-Windows-x64-Portable.zip -Force
+          & "$env:ProgramFiles(x86)\NSIS\makensis.exe" /DVERSION=0.3.0 /DBINARY="$pwd\target\release\xtmusic.exe" packaging/windows/native-installer.nsi
+          Get-FileHash release/* -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content release/SHA256SUMS-Windows.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Native-Windows-0.3.0
+          path: release/*
           if-no-files-found: error
+          retention-days: 14
