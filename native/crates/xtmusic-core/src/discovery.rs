@@ -1,6 +1,4 @@
-use crate::authx::{
-    compute_authx_with_timestamp, compute_fn_sign, now_millis,
-};
+use crate::authx::{compute_authx_with_timestamp, compute_fn_sign, now_millis};
 use crate::{ApiEnvelope, ConnectionCandidate, ConnectionResult, CoreError};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, COOKIE};
 use serde::Deserialize;
@@ -366,6 +364,7 @@ pub fn normalize_service_url(input: &str) -> Result<String, CoreError> {
     url.set_query(None);
     url.set_fragment(None);
     let mut path = url.path().replace("//", "/");
+    path = path.trim_end_matches('/').to_owned();
     for suffix in ["/music/api/v1", "/music"] {
         if path.to_ascii_lowercase().ends_with(suffix) {
             let keep = path.len().saturating_sub(suffix.len());
