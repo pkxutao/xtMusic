@@ -1,0 +1,52 @@
+name: Reconstruct Tauri migration
+
+on:
+  push:
+    branches:
+      - feat/tauri-rust-0.3.0
+    paths:
+      - '.migration/**'
+      - '.github/workflows/reconstruct-tauri.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconstruct:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct migration archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reconstructed
+          mapfile -t PARTS < <(find .migration -maxdepth 1 -type f -name 'payload.*' | sort -V)
+          test "${#PARTS[@]}" -gt 0
+          printf 'Parts:\n'
+          printf '  %s\n' "${PARTS[@]}"
+          cat "${PARTS[@]}" | tr -d '\r\n\t ' > reconstructed/payload.b64
+          base64 --decode reconstructed/payload.b64 > reconstructed/payload.bin
+          file reconstructed/payload.bin
+          sha256sum reconstructed/payload.bin
+          gzip -t reconstructed/payload.bin
+          mkdir -p reconstructed/source
+          tar -xzf reconstructed/payload.bin -C reconstructed/source
+          echo 'Extracted files:'
+          find reconstructed/source -maxdepth 4 -type f -printf '%P %s bytes\n' | sort
+          test -f reconstructed/source/package.json
+          test -f reconstructed/source/src-tauri/Cargo.toml
+          test -f reconstructed/source/src-tauri/tauri.conf.json
+
+      - name: Upload reconstructed source
+        uses: actions/upload-artifact@v4
+        with:
+          name: xtmusic-tauri-reconstructed-source
+          path: reconstructed/source
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
