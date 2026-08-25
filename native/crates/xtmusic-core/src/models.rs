@@ -7,7 +7,6 @@ pub struct ApiEnvelope<T> {
     pub code: i64,
     #[serde(default, alias = "message")]
     pub msg: String,
-    #[serde(default)]
     pub data: Option<T>,
 }
 
