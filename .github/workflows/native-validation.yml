@@ -1,0 +1,44 @@
+name: Native Source Validation
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "native/**"
+      - ".github/workflows/native-validation.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "native/**"
+      - ".github/workflows/native-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libgtk-3-dev libasound2-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libgl1-mesa-dev libssl-dev fonts-noto-cjk
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88.0"
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Verify locked native source
+        run: |
+          cargo fmt --manifest-path native/Cargo.toml -- --check
+          cargo check --locked --manifest-path native/Cargo.toml
+          cargo test --locked --manifest-path native/Cargo.toml
