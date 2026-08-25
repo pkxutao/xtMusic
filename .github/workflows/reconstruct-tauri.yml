@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -u
-          mkdir -p reconstructed/full reconstructed/partial reconstructed/diagnostics
+          mkdir -p reconstructed/full reconstructed/partial reconstructed/diagnostics snapshot
           mapfile -t PARTS < <(find .migration -maxdepth 1 -type f -name 'payload.*' | sort -V)
           test "${#PARTS[@]}" -gt 0
           printf 'Parts:\n' | tee reconstructed/diagnostics/parts.txt
@@ -66,11 +66,27 @@ jobs:
           echo 'Partial extraction:'
           find reconstructed/partial -type f -printf '%P %s bytes\n' | sort | tee reconstructed/diagnostics/partial-files.txt
 
+          rsync -a \
+            --exclude '.git/' \
+            --exclude '.migration/' \
+            --exclude 'reconstructed/' \
+            --exclude 'snapshot/' \
+            ./ snapshot/
+
       - name: Upload reconstruction diagnostics
         uses: actions/upload-artifact@v4
         with:
           name: xtmusic-tauri-reconstruction-diagnostics
           path: reconstructed
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload current source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: xtmusic-current-source-snapshot
+          path: snapshot
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
