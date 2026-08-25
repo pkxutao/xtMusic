@@ -81,9 +81,7 @@ fn audio_thread(
     initial_volume: f32,
 ) {
     let Ok((_stream, handle)) = OutputStream::try_default() else {
-        let _ = event_tx.send(PlayerEvent::Error(
-            "未找到可用的系统音频输出设备".into(),
-        ));
+        let _ = event_tx.send(PlayerEvent::Error("未找到可用的系统音频输出设备".into()));
         return;
     };
 
@@ -112,11 +110,12 @@ fn audio_thread(
                 send_state(&event_tx, &state);
 
                 let result = (|| {
-                    let file = File::open(&path)
-                        .map_err(|error| format!("无法读取音频缓存：{error}"))?;
+                    let file =
+                        File::open(&path).map_err(|error| format!("无法读取音频缓存：{error}"))?;
                     let decoder = Decoder::new(BufReader::new(file))
                         .map_err(|error| format!("当前格式无法解码：{error}"))?;
-                    let decoded_duration = decoder.total_duration().map(|value| value.as_secs_f64());
+                    let decoded_duration =
+                        decoder.total_duration().map(|value| value.as_secs_f64());
                     let next = Sink::try_new(&handle)
                         .map_err(|error| format!("无法创建系统音频输出：{error}"))?;
                     next.set_volume(state.volume);
@@ -195,9 +194,8 @@ fn audio_thread(
                             send_state(&event_tx, &state);
                         }
                         Err(error) => {
-                            let _ = event_tx.send(PlayerEvent::Error(format!(
-                                "当前音频无法跳转：{error}"
-                            )));
+                            let _ = event_tx
+                                .send(PlayerEvent::Error(format!("当前音频无法跳转：{error}")));
                         }
                     }
                 }

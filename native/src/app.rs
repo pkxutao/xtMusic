@@ -7,8 +7,8 @@ use crate::model::{
 };
 use crate::player::{NativePlayer, PlayerCommand, PlayerEvent, PlayerState};
 use eframe::egui::{
-    self, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Frame,
-    Layout, RichText, ScrollArea, Sense, Stroke, TextureHandle, TextureOptions, Vec2,
+    self, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Frame, Layout,
+    RichText, ScrollArea, Sense, Stroke, TextureHandle, TextureOptions, Vec2,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -196,10 +196,7 @@ impl XtMusicApp {
                     self.navigate(self.page);
                     self.load_page(NavPage::Playlists);
                     if memory_only {
-                        self.toast(
-                            "系统密钥环不可用，会话只保留到本次运行",
-                            false,
-                        );
+                        self.toast("系统密钥环不可用，会话只保留到本次运行", false);
                     }
                 }
                 BackendMessage::Connected(Err(error)) => {
@@ -252,7 +249,11 @@ impl XtMusicApp {
                     }
                 }
                 BackendMessage::LyricsReady(guid, result) => {
-                    if self.player_state.track.as_ref().map(|item| item.guid.as_str())
+                    if self
+                        .player_state
+                        .track
+                        .as_ref()
+                        .map(|item| item.guid.as_str())
                         == Some(guid.as_str())
                     {
                         self.lyrics_guid = Some(guid);
@@ -263,7 +264,11 @@ impl XtMusicApp {
                     Ok(favorite) => {
                         self.update_favorite(&guid, favorite);
                         self.toast(
-                            if favorite { "已添加到喜欢" } else { "已取消喜欢" },
+                            if favorite {
+                                "已添加到喜欢"
+                            } else {
+                                "已取消喜欢"
+                            },
                             false,
                         );
                     }
@@ -339,8 +344,12 @@ impl XtMusicApp {
     }
 
     fn prepare_current(&mut self) {
-        let Some(index) = self.queue_index else { return };
-        let Some(track) = self.queue.get(index).cloned() else { return };
+        let Some(index) = self.queue_index else {
+            return;
+        };
+        let Some(track) = self.queue.get(index).cloned() else {
+            return;
+        };
         self.player_state.loading = true;
         self.player_state.track = Some(track.clone());
         self.lyrics = Lyrics::default();
@@ -396,9 +405,10 @@ impl XtMusicApp {
     }
 
     fn toggle_current_favorite(&mut self) {
-        let Some(track) = self.player_state.track.clone() else { return };
-        self.backend
-            .set_favorite(track.guid, !track.is_favorite);
+        let Some(track) = self.player_state.track.clone() else {
+            return;
+        };
+        self.backend.set_favorite(track.guid, !track.is_favorite);
     }
 
     fn update_favorite(&mut self, guid: &str, favorite: bool) {
@@ -443,7 +453,10 @@ impl XtMusicApp {
     fn cover(&mut self, ui: &mut egui::Ui, cover_id: Option<&str>, size: f32) {
         if let Some(id) = cover_id {
             if let Some(texture) = self.covers.get(id) {
-                ui.add(egui::Image::new((texture.id(), Vec2::splat(size))).corner_radius(egui::CornerRadius::same(8)));
+                ui.add(
+                    egui::Image::new((texture.id(), Vec2::splat(size)))
+                        .corner_radius(egui::CornerRadius::same(8)),
+                );
                 return;
             }
             self.request_cover(id, size.max(64.0) as usize * 2);
@@ -642,7 +655,11 @@ impl XtMusicApp {
             .frame(Frame::default().fill(PANEL_DARK).inner_margin(10))
             .show(ctx, |ui| self.player_bar(ui));
         egui::CentralPanel::default()
-            .frame(Frame::default().fill(BG_DARK).inner_margin(if immersive { 0 } else { 18 }))
+            .frame(
+                Frame::default()
+                    .fill(BG_DARK)
+                    .inner_margin(if immersive { 0 } else { 18 }),
+            )
             .show(ctx, |ui| {
                 if immersive {
                     self.lyrics_page(ui);
@@ -665,7 +682,8 @@ impl XtMusicApp {
                 egui::TextEdit::singleline(&mut self.search_query)
                     .hint_text("搜索歌曲、专辑或歌手…"),
             );
-            let enter = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            let enter =
+                response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
             if enter && !self.search_query.trim().is_empty() {
                 self.backend.search(self.search_query.trim().to_owned());
             }
@@ -701,8 +719,7 @@ impl XtMusicApp {
             if ui
                 .add_sized(
                     [ui.available_width(), 38.0],
-                    egui::Button::new(RichText::new(page.label()).size(14.0))
-                        .selected(selected),
+                    egui::Button::new(RichText::new(page.label()).size(14.0)).selected(selected),
                 )
                 .clicked()
             {
@@ -713,10 +730,7 @@ impl XtMusicApp {
         ui.separator();
         ui.add_space(8.0);
         if ui
-            .add_sized(
-                [ui.available_width(), 38.0],
-                egui::Button::new("新建歌单"),
-            )
+            .add_sized([ui.available_width(), 38.0], egui::Button::new("新建歌单"))
             .clicked()
         {
             self.show_create_playlist = true;
@@ -900,11 +914,8 @@ impl XtMusicApp {
                 for genre in data.genres {
                     ui.add_sized(
                         [180.0, 68.0],
-                        egui::Button::new(format!(
-                            "{}\n{} 首歌曲",
-                            genre.name, genre.track_count
-                        ))
-                        .fill(PANEL_DARK),
+                        egui::Button::new(format!("{}\n{} 首歌曲", genre.name, genre.track_count))
+                            .fill(PANEL_DARK),
                     );
                 }
             });
@@ -1051,11 +1062,11 @@ impl XtMusicApp {
                     .horizontal(|ui| {
                         ui.label(if active { "▶" } else { "  " });
                         ui.vertical(|ui| {
-                            ui.label(
-                                RichText::new(&track.title)
-                                    .strong()
-                                    .color(if active { ACCENT } else { Color32::WHITE }),
-                            );
+                            ui.label(RichText::new(&track.title).strong().color(if active {
+                                ACCENT
+                            } else {
+                                Color32::WHITE
+                            }));
                             ui.label(
                                 RichText::new(track.artist_text())
                                     .size(11.0)
@@ -1101,7 +1112,11 @@ impl XtMusicApp {
         ui.horizontal(|ui| {
             ui.allocate_ui(Vec2::new(310.0, ui.available_height()), |ui| {
                 ui.horizontal(|ui| {
-                    self.cover(ui, track.as_ref().and_then(|item| item.cover_id.as_deref()), 68.0);
+                    self.cover(
+                        ui,
+                        track.as_ref().and_then(|item| item.cover_id.as_deref()),
+                        68.0,
+                    );
                     ui.vertical(|ui| {
                         ui.add_space(8.0);
                         ui.label(
@@ -1123,18 +1138,33 @@ impl XtMusicApp {
                             .size(12.0)
                             .color(TEXT_MUTED),
                         );
-                        if track.is_some() && ui.small_button(if track.as_ref().is_some_and(|item| item.is_favorite) { "♥" } else { "♡" }).clicked() {
+                        if track.is_some()
+                            && ui
+                                .small_button(
+                                    if track.as_ref().is_some_and(|item| item.is_favorite) {
+                                        "♥"
+                                    } else {
+                                        "♡"
+                                    },
+                                )
+                                .clicked()
+                        {
                             self.toggle_current_favorite();
                         }
                     });
                 });
             });
             ui.allocate_ui_with_layout(
-                Vec2::new((ui.available_width() - 220.0).max(360.0), ui.available_height()),
+                Vec2::new(
+                    (ui.available_width() - 220.0).max(360.0),
+                    ui.available_height(),
+                ),
                 Layout::top_down(Align::Center),
                 |ui| {
                     ui.horizontal(|ui| {
-                        if ui.selectable_label(self.shuffle, "随机").clicked() { self.shuffle = !self.shuffle; }
+                        if ui.selectable_label(self.shuffle, "随机").clicked() {
+                            self.shuffle = !self.shuffle;
+                        }
                         if ui.button("⏮").clicked() {
                             self.previous_track();
                         }
@@ -1220,7 +1250,11 @@ impl XtMusicApp {
         ui.columns(2, |columns| {
             columns[0].with_layout(Layout::top_down(Align::Center), |ui| {
                 ui.add_space(55.0);
-                self.cover(ui, track.as_ref().and_then(|item| item.cover_id.as_deref()), 330.0);
+                self.cover(
+                    ui,
+                    track.as_ref().and_then(|item| item.cover_id.as_deref()),
+                    330.0,
+                );
                 ui.add_space(24.0);
                 ui.label(
                     RichText::new(
@@ -1256,9 +1290,8 @@ impl XtMusicApp {
                     .show(&mut columns[1], |ui| {
                         ui.add_space(240.0);
                         for (index, line) in self.lyrics.lines.iter().enumerate() {
-                            let distance = active
-                                .map(|current| current.abs_diff(index))
-                                .unwrap_or(10);
+                            let distance =
+                                active.map(|current| current.abs_diff(index)).unwrap_or(10);
                             let is_active = active == Some(index);
                             let alpha = match distance {
                                 0 => 255,
@@ -1282,12 +1315,19 @@ impl XtMusicApp {
                                 Color32::from_rgba_unmultiplied(220, 225, 235, alpha)
                             };
                             let response = ui.add_sized(
-                                [ui.available_width() - 24.0, if is_active { 72.0 } else { 58.0 }],
+                                [
+                                    ui.available_width() - 24.0,
+                                    if is_active { 72.0 } else { 58.0 },
+                                ],
                                 egui::Label::new(
-                                    RichText::new(if line.text.is_empty() { "♪" } else { &line.text })
-                                        .size(if is_active { 28.0 } else { 21.0 })
-                                        .strong()
-                                        .color(color),
+                                    RichText::new(if line.text.is_empty() {
+                                        "♪"
+                                    } else {
+                                        &line.text
+                                    })
+                                    .size(if is_active { 28.0 } else { 21.0 })
+                                    .strong()
+                                    .color(color),
                                 )
                                 .sense(Sense::click()),
                             );
@@ -1410,10 +1450,14 @@ impl XtMusicApp {
                 });
         }
 
-        self.toasts.retain(|toast| toast.created.elapsed() < Duration::from_secs(4));
+        self.toasts
+            .retain(|toast| toast.created.elapsed() < Duration::from_secs(4));
         for (index, toast) in self.toasts.iter().enumerate() {
             egui::Area::new(egui::Id::new(("toast", index)))
-                .anchor(Align2::RIGHT_TOP, Vec2::new(-18.0, 72.0 + index as f32 * 54.0))
+                .anchor(
+                    Align2::RIGHT_TOP,
+                    Vec2::new(-18.0, 72.0 + index as f32 * 54.0),
+                )
                 .show(ctx, |ui| {
                     Frame::default()
                         .fill(if toast.error {
@@ -1472,11 +1516,14 @@ fn section_title(ui: &mut egui::Ui, title: &str) {
 }
 
 fn centered_loading(ui: &mut egui::Ui, text: &str) {
-    ui.with_layout(Layout::top_down(Align::Center).with_main_justify(true), |ui| {
-        ui.spinner();
-        ui.add_space(12.0);
-        ui.label(RichText::new(text).color(TEXT_MUTED));
-    });
+    ui.with_layout(
+        Layout::top_down(Align::Center).with_main_justify(true),
+        |ui| {
+            ui.spinner();
+            ui.add_space(12.0);
+            ui.label(RichText::new(text).color(TEXT_MUTED));
+        },
+    );
 }
 
 fn track_table(ui: &mut egui::Ui, tracks: &[Track], active: Option<&Track>) -> Vec<TrackAction> {
@@ -1484,8 +1531,14 @@ fn track_table(ui: &mut egui::Ui, tracks: &[Track], active: Option<&Track>) -> V
     let active_guid = active.map(|item| item.guid.as_str());
     ui.horizontal(|ui| {
         ui.add_sized([36.0, 22.0], egui::Label::new("#"));
-        ui.add_sized([ui.available_width() * 0.42, 22.0], egui::Label::new("标题"));
-        ui.add_sized([ui.available_width() * 0.28, 22.0], egui::Label::new("专辑"));
+        ui.add_sized(
+            [ui.available_width() * 0.42, 22.0],
+            egui::Label::new("标题"),
+        );
+        ui.add_sized(
+            [ui.available_width() * 0.28, 22.0],
+            egui::Label::new("专辑"),
+        );
         ui.label("时长");
     });
     ui.separator();
@@ -1507,11 +1560,11 @@ fn track_table(ui: &mut egui::Ui, tracks: &[Track], active: Option<&Track>) -> V
                         Vec2::new(ui.available_width() * 0.40, 30.0),
                         Layout::top_down(Align::Min),
                         |ui| {
-                            ui.label(
-                                RichText::new(&track.title)
-                                    .strong()
-                                    .color(if is_active { ACCENT } else { Color32::WHITE }),
-                            );
+                            ui.label(RichText::new(&track.title).strong().color(if is_active {
+                                ACCENT
+                            } else {
+                                Color32::WHITE
+                            }));
                             ui.label(
                                 RichText::new(track.artist_text())
                                     .size(10.5)
@@ -1522,7 +1575,9 @@ fn track_table(ui: &mut egui::Ui, tracks: &[Track], active: Option<&Track>) -> V
                     ui.add_sized(
                         [ui.available_width() * 0.30, 28.0],
                         egui::Label::new(
-                            RichText::new(track.album_text()).size(12.0).color(TEXT_MUTED),
+                            RichText::new(track.album_text())
+                                .size(12.0)
+                                .color(TEXT_MUTED),
                         ),
                     );
                     ui.label(
@@ -1530,7 +1585,10 @@ fn track_table(ui: &mut egui::Ui, tracks: &[Track], active: Option<&Track>) -> V
                             .size(12.0)
                             .color(TEXT_MUTED),
                     );
-                    if ui.small_button(if track.is_favorite { "♥" } else { "♡" }).clicked() {
+                    if ui
+                        .small_button(if track.is_favorite { "♥" } else { "♡" })
+                        .clicked()
+                    {
                         actions.push(TrackAction::Favorite(index));
                     }
                     if ui.small_button("＋").clicked() {
@@ -1584,7 +1642,10 @@ fn decode_color_image(bytes: &[u8]) -> Result<egui::ColorImage, String> {
         .map_err(|error| error.to_string())?
         .to_rgba8();
     let size = [image.width() as usize, image.height() as usize];
-    Ok(egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()))
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
+        size,
+        image.as_raw(),
+    ))
 }
 
 fn blend(from: Color32, to: Color32, amount: f32) -> Color32 {

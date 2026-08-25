@@ -156,7 +156,12 @@ impl Track {
             .unwrap_or_else(|| {
                 let name = string_any(value, &["artistName", "artist"]);
                 (!name.is_empty())
-                    .then(|| vec![Artist { name, ..Default::default() }])
+                    .then(|| {
+                        vec![Artist {
+                            name,
+                            ..Default::default()
+                        }]
+                    })
                     .unwrap_or_default()
             });
         let album = value.get("album").and_then(|item| {

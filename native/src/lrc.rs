@@ -47,9 +47,9 @@ pub fn parse_lrc(input: &str) -> Lyrics {
     }
 
     lyrics.lines.sort_by(|a, b| a.time.total_cmp(&b.time));
-    lyrics.lines.dedup_by(|a, b| {
-        (a.time - b.time).abs() < 0.001 && a.text.trim() == b.text.trim()
-    });
+    lyrics
+        .lines
+        .dedup_by(|a, b| (a.time - b.time).abs() < 0.001 && a.text.trim() == b.text.trim());
     lyrics
 }
 
@@ -62,7 +62,9 @@ pub fn active_line(lines: &[LyricLine], time: f64) -> Option<usize> {
 }
 
 pub fn line_progress(lines: &[LyricLine], index: usize, time: f64, duration: f64) -> f32 {
-    let Some(line) = lines.get(index) else { return 0.0 };
+    let Some(line) = lines.get(index) else {
+        return 0.0;
+    };
     let next = lines
         .get(index + 1)
         .map(|item| item.time)

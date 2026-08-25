@@ -124,9 +124,7 @@ impl Storage {
             }
         }
         if !keyring_secure {
-            self.ephemeral
-                .write()
-                .insert(profile.id.clone(), secret);
+            self.ephemeral.write().insert(profile.id.clone(), secret);
         }
 
         {

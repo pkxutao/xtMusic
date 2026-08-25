@@ -29,7 +29,10 @@ fn password_is_not_serializable_or_persisted() {
     assert!(!storage.contains("password:"));
     assert!(!storage.contains("password\""));
     assert!(model.contains("pub password: String"));
-    assert!(!model.contains("struct LoginRequest") || !model.contains("Serialize, Deserialize)]\npub struct LoginRequest"));
+    assert!(
+        !model.contains("struct LoginRequest")
+            || !model.contains("Serialize, Deserialize)]\npub struct LoginRequest")
+    );
 }
 
 #[test]
@@ -41,7 +44,10 @@ fn redirect_layer_strips_sensitive_headers() {
         "x-access-code",
         "HTTPS_DOWNGRADE_BLOCKED",
     ] {
-        assert!(transport.contains(marker), "missing redirect guard: {marker}");
+        assert!(
+            transport.contains(marker),
+            "missing redirect guard: {marker}"
+        );
     }
 }
 

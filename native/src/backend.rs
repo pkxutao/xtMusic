@@ -1,6 +1,4 @@
-use crate::api::{
-    AppError, ClientConfig, ConnectionOptions, Discovery, MusicClient, Transport,
-};
+use crate::api::{AppError, ClientConfig, ConnectionOptions, Discovery, MusicClient, Transport};
 use crate::model::{
     ConnectedSession, LibraryPage, LoginRequest, Lyrics, NavPage, SavedProfile, SecretRecord,
     Settings, Track,
@@ -85,10 +83,7 @@ impl Backend {
             let Some(secret) = storage.secret(&profile.id) else {
                 return;
             };
-            let client = MusicClient::new(
-                transport,
-                client_config(&profile, &secret),
-            );
+            let client = MusicClient::new(transport, client_config(&profile, &secret));
             match client.validate() {
                 Ok(()) => {
                     *client_slot.write() = Some(client);
@@ -249,7 +244,9 @@ impl Backend {
                 NavPage::Home => load_home(client),
                 NavPage::Tracks => fetch_all_tracks(client, |page, size| client.tracks(page, size)),
                 NavPage::Albums => fetch_all_media(client, |page, size| client.albums(page, size)),
-                NavPage::Artists => fetch_all_media(client, |page, size| client.artists(page, size)),
+                NavPage::Artists => {
+                    fetch_all_media(client, |page, size| client.artists(page, size))
+                }
                 NavPage::Genres => fetch_all_media(client, |page, size| client.genres(page, size)),
                 NavPage::Favorites => {
                     fetch_all_tracks(client, |page, size| client.favorites(page, size))
@@ -284,7 +281,12 @@ impl Backend {
                     .cache_dir()
                     .join("audio")
                     .join(format!("{}.{}", track.guid, extension));
-                if path.exists() && path.metadata().map(|meta| meta.len() > 1024).unwrap_or(false) {
+                if path.exists()
+                    && path
+                        .metadata()
+                        .map(|meta| meta.len() > 1024)
+                        .unwrap_or(false)
+                {
                     return Ok(path);
                 }
                 client.download_track(&track.guid, &path)?;

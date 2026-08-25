@@ -79,8 +79,8 @@ impl Transport {
         body: Option<Vec<u8>>,
         options: RequestOptions,
     ) -> AppResult<Response> {
-        let mut current_url = Url::parse(url)
-            .map_err(|_| AppError::new("INVALID_URL", "服务器地址格式不正确"))?;
+        let mut current_url =
+            Url::parse(url).map_err(|_| AppError::new("INVALID_URL", "服务器地址格式不正确"))?;
         let mut current_method = method;
         let mut current_body = body;
 
@@ -144,8 +144,7 @@ impl Transport {
 
             let status = response.status();
             if status == StatusCode::SEE_OTHER
-                || ((status == StatusCode::MOVED_PERMANENTLY
-                    || status == StatusCode::FOUND)
+                || ((status == StatusCode::MOVED_PERMANENTLY || status == StatusCode::FOUND)
                     && current_method == Method::POST)
             {
                 current_method = Method::GET;
@@ -154,10 +153,7 @@ impl Transport {
             }
             current_url = next;
         }
-        Err(AppError::new(
-            "TOO_MANY_REDIRECTS",
-            "服务器重定向次数过多",
-        ))
+        Err(AppError::new("TOO_MANY_REDIRECTS", "服务器重定向次数过多"))
     }
 
     pub fn json(
@@ -352,15 +348,13 @@ impl Discovery {
                 )),
             }
         }
-        Err(AppError::new("NO_REACHABLE_SERVER", "没有找到可连接的飞牛音乐服务")
-            .details(json!({ "diagnostics": diagnostics })))
+        Err(
+            AppError::new("NO_REACHABLE_SERVER", "没有找到可连接的飞牛音乐服务")
+                .details(json!({ "diagnostics": diagnostics })),
+        )
     }
 
-    fn lookup_fn(
-        &self,
-        fn_id: &str,
-        options: &ConnectionOptions,
-    ) -> AppResult<Vec<Candidate>> {
+    fn lookup_fn(&self, fn_id: &str, options: &ConnectionOptions) -> AppResult<Vec<Candidate>> {
         let data = json!({ "fnId": fn_id.to_ascii_lowercase() });
         let body = serde_json::to_string(&data)
             .map_err(|error| AppError::new("INVALID_JSON", error.to_string()))?;
@@ -368,10 +362,8 @@ impl Discovery {
         let timestamp = Utc::now().timestamp_millis().to_string();
         let body_md5 = md5_hex(body.as_bytes());
         let signature = md5_hex(
-            format!(
-                "{AUTHX_PREFIX}_{FN_API_PATH}_{nonce}_{timestamp}_{body_md5}_{FN_API_KEY}"
-            )
-            .as_bytes(),
+            format!("{AUTHX_PREFIX}_{FN_API_PATH}_{nonce}_{timestamp}_{body_md5}_{FN_API_KEY}")
+                .as_bytes(),
         );
         let authx = format!("nonce={nonce}&timestamp={timestamp}&sign={signature}");
         let mut headers = HeaderMap::new();
@@ -455,7 +447,12 @@ impl Discovery {
             } else {
                 format!("https://{relay}")
             };
-            rows.push(candidate(url.clone(), true, format!("FN Connect 中继 · {url}"), 40));
+            rows.push(candidate(
+                url.clone(),
+                true,
+                format!("FN Connect 中继 · {url}"),
+                40,
+            ));
         }
         Ok(rows)
     }
@@ -560,7 +557,10 @@ impl MusicClient {
     pub fn playlists(&self, page: usize, size: usize) -> AppResult<LibraryPage> {
         let value = self.page("/playlist/list", json!({ "page": page, "size": size }))?;
         Ok(LibraryPage {
-            playlists: parse_list(&value).iter().map(Playlist::from_value).collect(),
+            playlists: parse_list(&value)
+                .iter()
+                .map(Playlist::from_value)
+                .collect(),
             total: parse_total(&value),
             ..Default::default()
         })
@@ -579,10 +579,7 @@ impl MusicClient {
     }
 
     pub fn history(&self, page: usize, size: usize) -> AppResult<LibraryPage> {
-        let value = self.page(
-            "/play-history/list",
-            json!({ "page": page, "size": size }),
-        )?;
+        let value = self.page("/play-history/list", json!({ "page": page, "size": size }))?;
         Ok(LibraryPage {
             tracks: parse_list(&value).iter().map(Track::from_value).collect(),
             total: parse_total(&value),
@@ -614,7 +611,11 @@ impl MusicClient {
             None,
             true,
         )?;
-        let list = value.get("list").and_then(Value::as_array).cloned().unwrap_or_default();
+        let list = value
+            .get("list")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         let preferred = value.get("preferred").and_then(Value::as_str);
         let item = preferred
             .and_then(|guid| {
@@ -918,8 +919,8 @@ fn dedupe_candidates(rows: &mut Vec<Candidate>) {
 }
 
 pub fn normalize_service_url(value: &str) -> AppResult<String> {
-    let mut url = Url::parse(value)
-        .map_err(|_| AppError::new("INVALID_URL", "服务器地址格式不正确"))?;
+    let mut url =
+        Url::parse(value).map_err(|_| AppError::new("INVALID_URL", "服务器地址格式不正确"))?;
     if url.scheme() != "http" && url.scheme() != "https" {
         return Err(AppError::new("INVALID_URL", "服务器仅支持 HTTP/HTTPS"));
     }
@@ -946,8 +947,14 @@ fn is_valid_fn_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        && value.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
-        && value.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && value
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
 }
 
 fn is_fn_connect_host(host: &str) -> bool {
