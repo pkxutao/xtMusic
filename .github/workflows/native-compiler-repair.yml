@@ -1,0 +1,100 @@
+name: Native Compiler Repair
+
+on:
+  push:
+    branches:
+      - feat/native-rust-egui-0.3.0
+    paths:
+      - 'native/**'
+      - '.github/workflows/native-compiler-repair.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: native-compiler-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/native-rust-egui-0.3.0
+          fetch-depth: 0
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libudev-dev libx11-dev libxi-dev libxcursor-dev \
+            libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev \
+            libgl1-mesa-dev pkg-config libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target
+          shared-key: xtmusic-native-compiler-repair
+
+      - name: Compile and apply narrow compatibility repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile --manifest-path native/Cargo.toml
+          set +e
+          cargo test --manifest-path native/Cargo.toml 2>&1 | tee /tmp/native-build.log
+          FIRST=${PIPESTATUS[0]}
+          set -e
+          if [ "$FIRST" -ne 0 ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          root = Path('native/src')
+          log = Path('/tmp/native-build.log').read_text(errors='replace')
+
+          def patch(file, replacements):
+              path = root / file
+              text = path.read_text()
+              original = text
+              for old, new in replacements:
+                  text = text.replace(old, new)
+              if text != original:
+                  path.write_text(text)
+
+          if 'expected `Result<Box<dyn App>' in log or ('run_native' in log and 'expected enum `Result`' in log):
+              patch('main.rs', [('Box::new(|cc| Box::new(NativeApp::new(cc)))', 'Box::new(|cc| Ok(Box::new(NativeApp::new(cc))))')])
+          if 'no method named `is_none_or`' in log:
+              patch('app.rs', [('.is_none_or(|current| current.guid != track.guid)', '.map_or(true, |current| current.guid != track.guid)')])
+          if 'expected `Arc<FontData>`' in log:
+              patch('app.rs', [('FontData::from_owned(bytes),', 'FontData::from_owned(bytes).into(),')])
+          if 'Distribution<usize>' in log:
+              patch('app.rs', [('let index = rand::random::<usize>() % self.queue.len();', 'let index = { use rand::Rng; rand::thread_rng().gen_range(0..self.queue.len()) };')])
+          if 'partially moved value' in log or 'borrow of moved value: `client`' in log:
+              patch('protocol.rs', [('"deviceId": client.device_id,', '"deviceId": client.device_id.clone(),')])
+          if 'Decoder' in log and 'method `context` exists' in log:
+              patch('audio.rs', [('let decoder = Decoder::new(BufReader::new(file))\n            .context("当前音频格式无法由系统解码")?;', 'let decoder = Decoder::new(BufReader::new(file)).map_err(|error| anyhow!("当前音频格式无法由系统解码：{error}"))?;')])
+          PY
+            cargo fix --manifest-path native/Cargo.toml --allow-dirty --allow-staged || true
+          fi
+          cargo fmt --manifest-path native/Cargo.toml --all
+          cargo test --manifest-path native/Cargo.toml
+
+      - name: Commit repaired source and lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add native/Cargo.lock native/src
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'fix(native): apply compiler-compatible Rust changes'
+          git push origin HEAD:feat/native-rust-egui-0.3.0
