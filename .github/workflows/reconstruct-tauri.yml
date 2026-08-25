@@ -7,6 +7,12 @@ on:
     paths:
       - '.migration/**'
       - '.github/workflows/reconstruct-tauri.yml'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - '.migration/**'
+      - '.github/workflows/reconstruct-tauri.yml'
   workflow_dispatch:
 
 permissions:
