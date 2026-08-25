@@ -1,0 +1,179 @@
+name: Native Release v2
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact merge commit to release
+        required: true
+  push:
+    tags:
+      - 'v0.3.0'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xtmusic-native-release-v0.3.0
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target
+          shared-key: xtmusic-native-release-v2-windows
+      - name: Test and build native Windows binary
+        shell: pwsh
+        run: |
+          if (Select-String -Path native/Cargo.toml -Pattern 'tauri|wry|webview|electron|chromium' -Quiet) { throw 'Web runtime dependency detected' }
+          cargo test --manifest-path native/Cargo.toml
+          cargo build --manifest-path native/Cargo.toml --release
+      - name: Package Windows artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install nsis --yes --no-progress
+          New-Item -ItemType Directory -Force release | Out-Null
+          $binary = (Resolve-Path 'native/target/release/xtmusic.exe').Path
+          $standalone = Join-Path $pwd 'release/XT-Music-Native-0.3.0-Windows-x64.exe'
+          $portable = Join-Path $pwd 'release/XT-Music-Native-0.3.0-Windows-x64-Portable.zip'
+          $setup = Join-Path $pwd 'release/XT-Music-Native-0.3.0-Windows-x64-Setup.exe'
+          Copy-Item $binary $standalone
+          Compress-Archive -Path $binary -DestinationPath $portable -Force
+          & "$env:ProgramFiles(x86)\NSIS\makensis.exe" "/DVERSION=0.3.0" "/DBINARY=$binary" "/DOUTFILE=$setup" packaging/windows/native-installer-v2.nsi
+          if (-not (Test-Path $setup)) { throw 'NSIS installer was not created' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-release-v2-windows
+          path: release/*
+          if-no-files-found: error
+
+  build-ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libudev-dev libx11-dev libxi-dev libxcursor-dev \
+            libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev \
+            libgl1-mesa-dev pkg-config libssl-dev file curl
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target
+          shared-key: xtmusic-native-release-v2-ubuntu
+      - name: Test and build native Ubuntu binary
+        run: |
+          ! grep -Eiq 'tauri|wry|webview|electron|chromium' native/Cargo.toml
+          cargo test --manifest-path native/Cargo.toml
+          cargo build --manifest-path native/Cargo.toml --release
+          ! strings native/target/release/xtmusic | grep -Eiq 'Electron|Chromium|WebView2|libwebkit2gtk|Tauri'
+      - name: Package Ubuntu artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=0.3.0
+          mkdir -p release
+          strip native/target/release/xtmusic
+          DEBROOT="$(mktemp -d)"
+          mkdir -p "$DEBROOT/DEBIAN" "$DEBROOT/usr/bin" "$DEBROOT/usr/share/applications" "$DEBROOT/usr/share/icons/hicolor/256x256/apps"
+          install -m 0755 native/target/release/xtmusic "$DEBROOT/usr/bin/xtmusic"
+          install -m 0644 packaging/linux/xtmusic-native.desktop "$DEBROOT/usr/share/applications/xtmusic-native.desktop"
+          install -m 0644 assets/app-icon.png "$DEBROOT/usr/share/icons/hicolor/256x256/apps/xtmusic-native.png"
+          cat > "$DEBROOT/DEBIAN/control" <<EOF
+          Package: xtmusic-native
+          Version: ${VERSION}
+          Section: sound
+          Priority: optional
+          Architecture: amd64
+          Maintainer: pkxutao
+          Depends: libasound2 | libasound2t64, libx11-6, libxi6, libxcursor1, libxrandr2, libxinerama1, libwayland-client0, libgl1
+          Description: Pure native Rust client for FNOS Music
+           GPU-native eframe/egui interface and rodio audio output. No Electron, Tauri or WebView.
+          EOF
+          dpkg-deb --root-owner-group --build "$DEBROOT" "release/XT-Music-Native-${VERSION}-Ubuntu-amd64.deb"
+          rm -rf "$DEBROOT"
+          APPDIR="$(mktemp -d)/XTMusicNative.AppDir"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+          install -m 0755 native/target/release/xtmusic "$APPDIR/usr/bin/xtmusic"
+          install -m 0644 packaging/linux/xtmusic-native.desktop "$APPDIR/xtmusic-native.desktop"
+          install -m 0644 assets/app-icon.png "$APPDIR/xtmusic-native.png"
+          cat > "$APPDIR/AppRun" <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/xtmusic" "$@"
+          EOF
+          chmod +x "$APPDIR/AppRun"
+          curl -fsSL -o /tmp/appimagetool.AppImage https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool.AppImage
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool.AppImage "$APPDIR" "release/XT-Music-Native-${VERSION}-Ubuntu-x86_64.AppImage"
+          rm -rf "$(dirname "$APPDIR")" /tmp/appimagetool.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-release-v2-ubuntu
+          path: |
+            release/*.deb
+            release/*.AppImage
+          if-no-files-found: error
+
+  publish:
+    needs: [build-windows, build-ubuntu]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-release-v2-*
+          path: release
+          merge-multiple: true
+      - name: Generate build information and checksums
+        shell: bash
+        env:
+          TARGET_REF: ${{ inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+          cat > release/BUILD-INFO.txt <<EOF
+          Product: XT Music Native
+          Version: 0.3.0
+          Commit: ${TARGET_REF}
+          UI: eframe/egui native GPU
+          Audio: rodio
+          Network: reqwest + rustls
+          Electron: no
+          Tauri: no
+          WebView: no
+          EOF
+          (cd release && find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+      - name: Publish GitHub Release v0.3.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.3.0
+          name: XT Music Native v0.3.0
+          target_commitish: ${{ inputs.ref || github.sha }}
+          body_path: releases/v0.3.0-native.md
+          draft: false
+          prerelease: false
+          make_latest: true
+          overwrite_files: true
+          files: |
+            release/*.exe
+            release/*.zip
+            release/*.deb
+            release/*.AppImage
+            release/BUILD-INFO.txt
+            release/SHA256SUMS.txt
