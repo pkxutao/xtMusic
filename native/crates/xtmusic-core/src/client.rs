@@ -178,10 +178,10 @@ impl FnMusicClient {
             .request_absolute_json(Method::GET, url, None, true)
             .await?;
         let data = self.unwrap_envelope(envelope, "获取歌词失败")?;
-        if let Some(preferred) = data.preferred.as_deref() {
-            if let Some(item) = data.list.iter().find(|item| item.guid == preferred) {
-                return Ok(item.content.clone());
-            }
+        if let Some(preferred) = data.preferred.as_deref()
+            && let Some(item) = data.list.iter().find(|item| item.guid == preferred)
+        {
+            return Ok(item.content.clone());
         }
         Ok(data
             .list
