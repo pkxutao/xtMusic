@@ -1,0 +1,19 @@
+[package]
+name = "xtmusic-native"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "xtmusic-native"
+path = "src/main.rs"
+
+[dependencies]
+iced.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+xtmusic-core = { path = "../xtmusic-core" }
