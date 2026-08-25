@@ -4,7 +4,7 @@ version = "0.3.0"
 description = "Native high-performance FNOS Music desktop client"
 authors = ["pkxutao"]
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 publish = false
 

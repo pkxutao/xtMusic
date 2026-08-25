@@ -1,4 +1,4 @@
-name: Native Cross-platform Validation
+name: Native Source Validation
 
 on:
   push:
@@ -10,24 +10,15 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-
-concurrency:
-  group: xtmusic-native-validation
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  normalize:
+  validate:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 75
-    outputs:
-      sha: ${{ steps.commit.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: feat/native-rust-egui-0.3.0
-          fetch-depth: 0
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -38,140 +29,13 @@ jobs:
             libgl1-mesa-dev libssl-dev fonts-noto-cjk
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.88.0"
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native
-      - name: Generate dependency lock
-        run: cargo generate-lockfile --manifest-path native/Cargo.toml
-      - name: Apply compiler suggestions
-        run: cargo fix --locked --manifest-path native/Cargo.toml --allow-dirty --allow-staged
-      - name: Format sources
-        run: cargo fmt --manifest-path native/Cargo.toml
-      - name: Compile and test normalized sources
+      - name: Verify locked native source
         run: |
+          cargo fmt --manifest-path native/Cargo.toml -- --check
           cargo check --locked --manifest-path native/Cargo.toml
           cargo test --locked --manifest-path native/Cargo.toml
-      - id: commit
-        name: Commit deterministic normalized sources
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add native/Cargo.toml native/Cargo.lock native/src native/tests
-          if ! git diff --cached --quiet; then
-            git commit -m "build(native): normalize and lock Rust sources"
-            git push origin HEAD:feat/native-rust-egui-0.3.0
-          fi
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-  windows:
-    needs: normalize
-    runs-on: windows-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.normalize.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85.0"
-          components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
-      - run: cargo fmt --manifest-path native/Cargo.toml -- --check
-      - run: cargo test --locked --manifest-path native/Cargo.toml
-      - run: cargo build --release --locked --manifest-path native/Cargo.toml
-      - shell: powershell
-        run: choco install innosetup --no-progress -y
-      - name: Package Windows installer
-        shell: powershell
-        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "native\installer\windows.iss"'
-      - name: Generate Windows checksum
-        shell: powershell
-        run: |
-          Get-FileHash native\dist\*.exe -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
-            Set-Content native\dist\SHA256SUMS-Windows.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: XT-Music-Native-Windows-x64-${{ needs.normalize.outputs.sha }}
-          path: |
-            native/dist/*.exe
-            native/dist/SHA256SUMS-Windows.txt
-          if-no-files-found: error
-
-  ubuntu:
-    needs: normalize
-    runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.normalize.outputs.sha }}
-      - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config libgtk-3-dev libasound2-dev libxkbcommon-dev \
-            libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libgl1-mesa-dev libssl-dev fonts-noto-cjk
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.85.0"
-          components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native
-      - run: cargo fmt --manifest-path native/Cargo.toml -- --check
-      - run: cargo test --locked --manifest-path native/Cargo.toml
-      - run: cargo build --release --locked --manifest-path native/Cargo.toml
-      - run: bash native/installer/package-linux.sh 0.3.0 amd64
-      - name: Inspect Ubuntu packages
-        run: |
-          file native/target/release/xtmusic
-          dpkg-deb --info native/dist/*.deb
-          sha256sum -c native/dist/SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: XT-Music-Native-Ubuntu-x64-${{ needs.normalize.outputs.sha }}
-          path: |
-            native/dist/*.deb
-            native/dist/*.tar.gz
-            native/dist/SHA256SUMS.txt
-          if-no-files-found: error
-
-  mark-validated:
-    needs: [normalize, windows, ubuntu]
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feat/native-rust-egui-0.3.0
-          fetch-depth: 0
-      - name: Record verified cross-platform build
-        shell: bash
-        env:
-          VERIFIED_SHA: ${{ needs.normalize.outputs.sha }}
-        run: |
-          set -euo pipefail
-          mkdir -p native/.ci
-          cat > native/.ci/cross-platform-pass.json <<EOF
-          {
-            "version": "0.3.0",
-            "commit": "${VERIFIED_SHA}",
-            "windows": "passed",
-            "ubuntu": "passed",
-            "runtime": "Rust + egui/eframe; no Electron, no Tauri, no WebView",
-            "workflow": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          }
-          EOF
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add native/.ci/cross-platform-pass.json
-          git commit -m "ci(native): record Windows and Ubuntu validation"
-          git push origin HEAD:feat/native-rust-egui-0.3.0

@@ -41,17 +41,17 @@ jobs:
   windows:
     needs: prepare
     runs-on: windows-latest
-    timeout-minutes: 70
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.88.0"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native
-      - run: cargo test --manifest-path native/Cargo.toml
-      - run: cargo build --release --manifest-path native/Cargo.toml
+      - run: cargo test --locked --manifest-path native/Cargo.toml
+      - run: cargo build --release --locked --manifest-path native/Cargo.toml
       - shell: powershell
         run: choco install innosetup --no-progress -y
       - shell: powershell
@@ -65,7 +65,7 @@ jobs:
   ubuntu:
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 70
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -77,12 +77,12 @@ jobs:
             libgl1-mesa-dev libssl-dev fonts-noto-cjk
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.88.0"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native
-      - run: cargo test --manifest-path native/Cargo.toml
-      - run: cargo build --release --manifest-path native/Cargo.toml
+      - run: cargo test --locked --manifest-path native/Cargo.toml
+      - run: cargo build --release --locked --manifest-path native/Cargo.toml
       - run: bash native/installer/package-linux.sh ${{ needs.prepare.outputs.version }} amd64
       - uses: actions/upload-artifact@v4
         with:
@@ -115,7 +115,7 @@ jobs:
           Version: ${VERSION}
           Tag: ${TAG}
           Commit: ${TARGET_SHA}
-          Runtime: Rust + egui/eframe (no Electron, no WebView)
+          Runtime: Rust + egui/eframe (no Electron, no Tauri, no WebView)
           Built by: GitHub Actions
           EOF
           cd release
