@@ -1,0 +1,95 @@
+name: Native Release Verifier
+
+on:
+  workflow_run:
+    workflows:
+      - Native Release v2
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify assets and commit publication proof
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag: 'v0.3.0' });
+            if (release.data.draft || release.data.prerelease) throw new Error('v0.3.0 is not a final public release');
+
+            const expected = [
+              'XT-Music-Native-0.3.0-Windows-x64.exe',
+              'XT-Music-Native-0.3.0-Windows-x64-Portable.zip',
+              'XT-Music-Native-0.3.0-Windows-x64-Setup.exe',
+              'XT-Music-Native-0.3.0-Ubuntu-amd64.deb',
+              'XT-Music-Native-0.3.0-Ubuntu-x86_64.AppImage',
+              'BUILD-INFO.txt',
+              'SHA256SUMS.txt',
+            ];
+            const assets = new Map(release.data.assets.map(asset => [asset.name, asset]));
+            for (const name of expected) {
+              const asset = assets.get(name);
+              if (!asset) throw new Error(`Missing release asset: ${name}`);
+              if (!asset.size || asset.state !== 'uploaded') throw new Error(`Invalid release asset: ${name}`);
+            }
+
+            const proof = {
+              product: 'XT Music Native',
+              version: '0.3.0',
+              tag: release.data.tag_name,
+              release_id: release.data.id,
+              release_url: release.data.html_url,
+              target_commitish: release.data.target_commitish,
+              published_at: release.data.published_at,
+              verified_at: new Date().toISOString(),
+              architecture: {
+                ui: 'eframe/egui native GPU',
+                audio: 'rodio',
+                network: 'reqwest + rustls',
+                electron: false,
+                tauri: false,
+                webview: false,
+              },
+              assets: expected.map(name => {
+                const asset = assets.get(name);
+                return {
+                  name: asset.name,
+                  size: asset.size,
+                  digest: asset.digest || null,
+                  download_url: asset.browser_download_url,
+                };
+              }),
+            };
+            const path = 'releases/v0.3.0-published.json';
+            let sha;
+            try {
+              const current = await github.rest.repos.getContent({ owner, repo, path, ref: 'master' });
+              sha = current.data.sha;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            const master = await github.rest.git.getRef({ owner, repo, ref: 'heads/master' });
+            const result = await github.rest.repos.createOrUpdateFileContents({
+              owner,
+              repo,
+              path,
+              branch: 'master',
+              message: 'chore(release): verify XT Music Native v0.3.0 assets',
+              content: Buffer.from(JSON.stringify(proof, null, 2) + '\n').toString('base64'),
+              sha,
+            });
+            await github.rest.git.updateRef({
+              owner,
+              repo,
+              ref: 'heads/main',
+              sha: result.data.commit.sha,
+              force: true,
+            });
+            core.notice(`Verified ${expected.length} v0.3.0 release assets.`);
