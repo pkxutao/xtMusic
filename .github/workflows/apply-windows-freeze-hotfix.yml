@@ -30,7 +30,7 @@ jobs:
           node-version: 22
 
       - name: Apply source hotfix
-        run: node scripts/apply-windows-freeze-hotfix.js
+        run: node scripts/apply-windows-freeze-hotfix-v2.js
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
