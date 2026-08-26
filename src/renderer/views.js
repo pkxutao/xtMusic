@@ -11,6 +11,9 @@ import {
   trackDuration
 } from './utils.js';
 
+const MAX_SIDEBAR_PLAYLISTS = 120;
+const MAX_PLAYLIST_PICKER_ITEMS = 500;
+
 export function loginView({ accounts = [], encryptionAvailable = true, error = null } = {}) {
   const accountRows = accounts.map((account) => `
     <button class="saved-account-card" data-login-account="${attr(account.id)}" type="button">
@@ -147,6 +150,10 @@ export function loginView({ accounts = [], encryptionAvailable = true, error = n
 
 export function sidebarView(state) {
   const session = state.session || {};
+  const playlists = Array.isArray(state.playlists) ? state.playlists : [];
+  const visiblePlaylists = playlists.slice(0, MAX_SIDEBAR_PLAYLISTS);
+  const playlistTotal = Math.max(Number(state.playlistTotal || 0), playlists.length);
+  const hiddenPlaylistCount = Math.max(0, playlistTotal - visiblePlaylists.length);
   const nav = [
     ['home', 'home', '首页'],
     ['tracks', 'music', '歌曲'],
@@ -177,7 +184,7 @@ export function sidebarView(state) {
           <button class="icon-button tiny" data-action="create-playlist" title="新建歌单">${icon('plus', 15)}</button>
         </div>
         <div class="playlist-nav-list">
-          ${(state.playlists || []).map((playlist) => `
+          ${visiblePlaylists.map((playlist) => `
             <button class="nav-item nav-playlist ${current === 'playlist' && state.route.params?.guid === playlist.guid ? 'is-active' : ''}"
                     data-open-kind="playlist"
                     data-open-id="${attr(playlist.guid)}">
@@ -185,6 +192,7 @@ export function sidebarView(state) {
               <span title="${attr(playlist.name)}">${escapeHtml(playlist.name)}</span>
             </button>
           `).join('') || '<div class="nav-empty">还没有歌单</div>'}
+          ${hiddenPlaylistCount ? `<div class="nav-empty playlist-overflow-note">另有 ${hiddenPlaylistCount} 个歌单按需加载</div>` : ''}
         </div>
       </nav>
       <div class="sidebar-spacer"></div>
@@ -457,12 +465,13 @@ export function accountModal(accounts, activeId) {
 }
 
 export function playlistModal(playlists, tracks) {
+  const visiblePlaylists = (Array.isArray(playlists) ? playlists : []).slice(0, MAX_PLAYLIST_PICKER_ITEMS);
   return `
     <div class="modal-backdrop" data-modal-backdrop="true">
       <section class="modal small-modal" role="dialog" aria-modal="true">
         <header class="modal-header"><div><p class="eyebrow">添加到歌单</p><h2>${tracks.length} 首歌曲</h2></div><button class="icon-button" data-action="close-modal">${icon('close', 19)}</button></header>
         <div class="modal-body selectable-list">
-          ${playlists.map((playlist) => `
+          ${visiblePlaylists.map((playlist) => `
             <button class="selectable-row" data-action="confirm-add-playlist" data-id="${attr(playlist.guid)}">
               ${imageHtml(playlist.coverId, playlist.name, 'selectable-cover', 128)}
               <span><strong>${escapeHtml(playlist.name)}</strong><small>${playlist.trackCount || 0} 首歌曲</small></span>

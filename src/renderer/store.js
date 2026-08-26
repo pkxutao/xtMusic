@@ -12,6 +12,7 @@ export class Store extends EventTarget {
       loading: false,
       error: null,
       playlists: [],
+      playlistTotal: 0,
       searchQuery: '',
       searchOpen: false,
       queueOpen: false,

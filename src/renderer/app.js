@@ -32,11 +32,17 @@ import {
   trackDuration
 } from './utils.js';
 
+const INITIAL_PLAYLIST_LIMIT = 120;
+const INITIAL_PLAYLIST_TIMEOUT_MS = 8000;
+const MAX_QUEUE_ROWS = 160;
+
 class XtMusicApp {
   constructor() {
     this.store = new Store();
     this.cache = new Map();
     this.requestSerial = 0;
+    this.playlistLoadSerial = 0;
+    this.sidebarSignature = '';
     this.currentTracks = [];
     this.currentItems = [];
     this.currentDetail = null;
@@ -80,6 +86,7 @@ class XtMusicApp {
     this.player = new Player({
       musicCall: (method, args) => api.music(method, args),
       publishState: (state) => bridge.player.publishState(state),
+      diagnostics: () => bridge.player.diagnostics(),
       onVolumeChange: debounce((volume) => {
         api.setSetting('volume', volume).catch(() => {});
         this.store.update((state) => ({
@@ -198,9 +205,10 @@ class XtMusicApp {
     this.els.playerTitle.addEventListener('click', () => this.#navigate('lyrics'));
     this.els.playerFavorite.addEventListener('click', () => this.#toggleFavorite(this.player.currentTrack));
 
-    for (const eventName of ['state', 'track', 'queue', 'progress']) {
+    for (const eventName of ['state', 'track', 'queue']) {
       this.player.addEventListener(eventName, () => this.#renderPlayer());
     }
+    this.player.addEventListener('progress', () => this.#renderPlayerProgress());
     this.player.addEventListener('track', () => {
       this.#renderQueue();
       if (this.currentTable) this.currentTable.setActiveGuid(this.player.currentTrack?.guid);
@@ -224,6 +232,9 @@ class XtMusicApp {
   }
 
   #showLogin(error = null, prefill = null) {
+    this.requestSerial += 1;
+    this.playlistLoadSerial += 1;
+    this.sidebarSignature = '';
     const state = this.store.get();
     this.els.shell.classList.add('is-hidden');
     this.els.loginRoot.classList.remove('is-hidden');
@@ -249,31 +260,63 @@ class XtMusicApp {
   }
 
   async #enterSession(session) {
-    this.store.set({ session, error: null }, 'session');
+    const playlistSerial = ++this.playlistLoadSerial;
+    this.sidebarSignature = '';
+    this.store.set({ session, error: null, playlists: [], playlistTotal: 0 }, 'session');
     this.els.loginRoot.classList.add('is-hidden');
     this.els.shell.classList.remove('is-hidden');
-    this.#renderChrome();
     this.#renderPlayer();
     this.#renderQueue();
-    try {
-      const playlists = await this.#fetchAll('getPlaylists', {}, 200, 5000);
-      this.store.set({ playlists }, 'playlists');
-    } catch {
-      this.store.set({ playlists: [] }, 'playlists');
-    }
+
     const last = this.store.get().settings.lastRoute || 'home';
     const safeRoute = ['home', 'tracks', 'albums', 'artists', 'genres', 'favorites', 'history', 'settings'].includes(last)
       ? last
       : 'home';
     this.store.navigate(safeRoute, {}, { replace: false, silent: true });
     this.#renderChrome();
+
+    // The first usable page is the critical path. Secondary playlist data is
+    // loaded only after that page has rendered.
     await this.#loadRoute(this.store.get().route);
+    void this.#loadInitialPlaylists(session, playlistSerial);
+  }
+
+  async #loadInitialPlaylists(session, serial) {
+    try {
+      const result = await withTimeout(
+        api.music('getPlaylists', { page: 1, size: INITIAL_PLAYLIST_LIMIT }),
+        INITIAL_PLAYLIST_TIMEOUT_MS,
+        '歌单加载超时'
+      );
+      if (serial !== this.playlistLoadSerial) return;
+      if (sessionKey(this.store.get().session) !== sessionKey(session)) return;
+      const list = Array.isArray(result?.list) ? result.list.slice(0, INITIAL_PLAYLIST_LIMIT) : [];
+      const total = Math.max(Number(result?.total || 0), list.length);
+      this.store.set({ playlists: list, playlistTotal: total }, 'playlists');
+      this.#renderChrome();
+    } catch {
+      // Playlist navigation is optional; failure must not replace the usable page.
+    }
   }
 
   #renderChrome() {
     const state = this.store.get();
     if (!state.session) return;
-    this.els.sidebar.innerHTML = sidebarView(state);
+    const visiblePlaylists = (state.playlists || []).slice(0, INITIAL_PLAYLIST_LIMIT);
+    const playlistSignature = visiblePlaylists
+      .map((item) => `${item.guid || ''}:${item.name || ''}`)
+      .join('\u001f');
+    const signature = [
+      sessionKey(state.session),
+      state.route?.name || 'home',
+      state.route?.params?.guid || '',
+      state.playlistTotal || visiblePlaylists.length,
+      playlistSignature
+    ].join('\u001e');
+    if (signature !== this.sidebarSignature) {
+      this.els.sidebar.innerHTML = sidebarView(state);
+      this.sidebarSignature = signature;
+    }
     this.els.titleAccount.innerHTML = `<span class="account-avatar">${escapeHtml(initials(state.session.name || state.session.username))}</span>`;
     this.els.back.disabled = state.historyIndex <= 0;
     this.els.forward.disabled = state.historyIndex >= state.history.length - 1;
@@ -847,7 +890,12 @@ class XtMusicApp {
     this.els.playerVolume.value = Math.round((state.muted ? 0 : state.volume) * 100);
     this.#setRangeProgress(this.els.playerVolume, Number(this.els.playerVolume.value));
 
-    const duration = Number(state.duration || trackDuration(track) || 0);
+    this.#renderPlayerProgress();
+  }
+
+  #renderPlayerProgress() {
+    const state = this.player.state;
+    const duration = Number(state.duration || trackDuration(state.track) || 0);
     const current = Math.min(Number(state.currentTime || 0), duration || Infinity);
     this.els.playerCurrent.textContent = formatDuration(current);
     this.els.playerDuration.textContent = formatDuration(duration);
@@ -865,7 +913,12 @@ class XtMusicApp {
   }
 
   #renderQueue() {
+    if (!this.store.get().queueOpen) {
+      if (this.els.queue.childElementCount) this.els.queue.replaceChildren();
+      return;
+    }
     const state = this.player.state;
+    const windowed = queueRenderWindow(state.queue, state.index, MAX_QUEUE_ROWS);
     this.els.queue.innerHTML = `
       <div class="queue-inner">
         <div class="queue-header">
@@ -873,7 +926,7 @@ class XtMusicApp {
           ${state.queue.length ? `<button class="text-button" data-action="clear-queue">清空</button>` : ''}
         </div>
         <div class="queue-list">
-          ${state.queue.map((track, index) => {
+          ${windowed.items.map(({ track, index }) => {
             const coverId = track.coverId || track.album?.coverId;
             return `
               <div class="queue-row ${index === state.index ? 'is-active' : ''}" data-queue-index="${index}">
@@ -886,6 +939,7 @@ class XtMusicApp {
               </div>
             `;
           }).join('') || '<div class="empty-state"><strong>队列是空的</strong><span>双击歌曲开始播放</span></div>'}
+          ${windowed.omitted ? `<div class="queue-window-note">队列较长，仅显示第 ${windowed.start + 1}–${windowed.end} 首；当前播放项始终保留在窗口内。</div>` : ''}
         </div>
       </div>
     `;
@@ -1119,6 +1173,42 @@ class XtMusicApp {
       setTimeout(() => row.remove(), 170);
     }, 3200);
   }
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function sessionKey(session) {
+  if (!session) return '';
+  return String(session.id || `${session.username || ''}@${session.serverUrl || session.fnId || ''}`);
+}
+
+function queueRenderWindow(queue, currentIndex, limit) {
+  const list = Array.isArray(queue) ? queue : [];
+  const size = Math.max(1, Number(limit || MAX_QUEUE_ROWS));
+  if (list.length <= size) {
+    return {
+      start: 0,
+      end: list.length,
+      omitted: false,
+      items: list.map((track, index) => ({ track, index }))
+    };
+  }
+  const safeIndex = Math.max(0, Math.min(list.length - 1, Number(currentIndex || 0)));
+  let start = Math.max(0, safeIndex - Math.floor(size / 2));
+  start = Math.min(start, list.length - size);
+  const end = Math.min(list.length, start + size);
+  return {
+    start,
+    end,
+    omitted: true,
+    items: list.slice(start, end).map((track, offset) => ({ track, index: start + offset }))
+  };
 }
 
 function routeKey(route) {

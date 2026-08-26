@@ -107,9 +107,10 @@ export function trackDuration(track) {
 }
 
 export function coverUrl(coverId, size = 480) {
-  return coverId
-    ? mediaResourceUrl('cover', coverId, `?size=${Math.round(size)}`)
-    : '';
+  if (!coverId) return '';
+  // Keep cover URLs stable so Chromium can reuse its disk cache across app
+  // launches. The random loopback base remains reserved for audio and HLS.
+  return `xtmusic://cover/${encodeURIComponent(String(coverId))}?size=${Math.round(size)}`;
 }
 
 export function streamUrl(guid) {
@@ -166,7 +167,7 @@ export function imageHtml(coverId, alt, className = 'cover-image', size = 480) {
   if (!coverId) {
     return `<div class="${className} cover-placeholder">${icon('music', 34)}</div>`;
   }
-  return `<img class="${className}" src="${attr(coverUrl(coverId, size))}" alt="${attr(alt)}" loading="lazy" decoding="async" draggable="false">`;
+  return `<img class="${className}" src="${attr(coverUrl(coverId, size))}" alt="${attr(alt)}" loading="lazy" decoding="async" fetchpriority="low" draggable="false">`;
 }
 
 export function icon(name, size = 20, className = '') {

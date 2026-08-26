@@ -2501,3 +2501,29 @@ select:focus-visible,
     grid-template-columns: 1fr;
   }
 }
+
+
+/* v0.3.3 responsiveness guards */
+.queue-window-note {
+  padding: 10px 12px 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+.playlist-overflow-note {
+  padding: 8px 12px;
+  line-height: 1.45;
+}
+@supports (content-visibility: auto) {
+  .home-section,
+  .media-card {
+    content-visibility: auto;
+  }
+  .home-section {
+    contain-intrinsic-size: 420px;
+  }
+  .media-card {
+    contain-intrinsic-size: 220px 180px;
+  }
+}
