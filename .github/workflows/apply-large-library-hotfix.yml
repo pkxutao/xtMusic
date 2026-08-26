@@ -6,7 +6,7 @@ on:
       - fix/large-library-0.3.5
     paths:
       - '.github/workflows/apply-large-library-hotfix.yml'
-      - 'scripts/apply-large-library-hotfix-v2.js'
+      - 'scripts/apply-large-library-hotfix-v3.js'
   workflow_dispatch:
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
           node-version: 22
 
       - name: Apply bounded-library source changes
-        run: node scripts/apply-large-library-hotfix-v2.js
+        run: node scripts/apply-large-library-hotfix-v3.js
 
       - name: Remove obsolete transient applicator
         shell: pwsh
@@ -99,7 +99,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git checkout -- .github/workflows
-          git rm -f --ignore-unmatch scripts/apply-large-library-hotfix.js scripts/apply-large-library-hotfix-v2.js
+          git rm -f --ignore-unmatch scripts/apply-large-library-hotfix.js scripts/apply-large-library-hotfix-v2.js scripts/apply-large-library-hotfix-v3.js
           git add package.json package-lock.json src/renderer/app.js src/renderer/views.js src/renderer/styles.css
           git add tests/large-library-pagination.test.js scripts/windows-large-library-preload.js scripts/windows-large-library-smoke.js
           git add ui-proof/windows-large-library-smoke.json
