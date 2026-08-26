@@ -34,10 +34,14 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t PARTS < <(find .playback-hotfix -maxdepth 1 -type f -name 'payload.*' | sort -V)
-          test "${#PARTS[@]}" -eq 5
+          printf 'Found %s payload parts\n' "${#PARTS[@]}"
+          printf '  %s\n' "${PARTS[@]}"
+          test "${#PARTS[@]}" -eq 8
+          wc -c "${PARTS[@]}"
           cat "${PARTS[@]}" > /tmp/xtmusic-playback-hotfix.b64
           base64 --decode /tmp/xtmusic-playback-hotfix.b64 > /tmp/hotfix.tar.gz
           ACTUAL="$(sha256sum /tmp/hotfix.tar.gz | awk '{print $1}')"
+          echo "archive_sha256=$ACTUAL"
           test "$ACTUAL" = "2026b835fe792dc624f631a4051ac723c77d281744842cdca4aa6c92086e7bae"
           tar -xzf /tmp/hotfix.tar.gz -C .
           rm -rf .playback-hotfix .github/workflows/apply-playback-hotfix.yml
