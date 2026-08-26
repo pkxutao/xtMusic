@@ -6,11 +6,16 @@ const {
   BrowserWindow,
   Menu,
   Tray,
+  Notification,
+  clipboard,
+  globalShortcut,
   nativeImage,
   nativeTheme,
   protocol,
-  screen
+  screen,
+  shell
 } = require('electron');
+const { Diagnostics } = require('./diagnostics');
 const { HttpTransport } = require('./protocol/http-transport');
 const { SecureAccountStore } = require('./storage/secure-store');
 const { SettingsStore } = require('./storage/settings-store');
@@ -57,7 +62,10 @@ const gotLock = app.requestSingleInstanceLock(instanceData);
 if (!gotLock) {
   app.quit();
 } else {
-  start();
+  start().catch((error) => {
+    console.error(error);
+    app.exit(1);
+  });
 }
 
 async function start() {
@@ -68,9 +76,14 @@ async function start() {
   let sessionService;
   let hlsRegistry;
   let mediaServer;
+  let diagnostics;
   let isQuitting = false;
 
   app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
+    diagnostics?.log('main', 'app:second-instance', {
+      incomingVersion: additionalData?.version,
+      sameExecutable: path.resolve(String(additionalData?.executablePath || '')) === path.resolve(process.execPath)
+    });
     const incomingVersion = String(additionalData?.version || '');
     const incomingExecutable = String(additionalData?.executablePath || '');
     if (
@@ -78,11 +91,9 @@ async function start() {
       incomingVersion !== app.getVersion() &&
       isTrustedUpgradeExecutable(incomingExecutable)
     ) {
-      // The package was upgraded while an older tray process was still alive.
-      // Restart through the newly installed executable instead of focusing the
-      // stale process. The DEB pre-install hook handles upgrades from versions
-      // that predate this handshake.
       isQuitting = true;
+      diagnostics?.log('main', 'app:upgrade-relaunch', { incomingVersion });
+      diagnostics?.flushSync();
       app.relaunch({ execPath: incomingExecutable, args: [] });
       app.exit(0);
       return;
@@ -97,19 +108,37 @@ async function start() {
 
   await app.whenReady();
 
+  diagnostics = new Diagnostics({ app, clipboard, shell, Notification });
+  diagnostics.installProcessHandlers();
+  runtime.diagnostics = diagnostics;
+  diagnostics.log('main', 'app:ready', {
+    executable: path.basename(process.execPath),
+    userData: app.getPath('userData'),
+    platformEnvironment
+  });
+
   accountStore = new SecureAccountStore(app.getPath('userData'));
   settingsStore = new SettingsStore(app.getPath('userData'));
   hlsRegistry = new HlsRegistry();
   mediaServer = new MediaServer({ runtime, hlsRegistry });
+  runtime.mediaServer = mediaServer;
   try {
     await mediaServer.start();
     process.env.XT_MUSIC_MEDIA_BASE_URL = mediaServer.baseUrl;
+    diagnostics.log('main', 'media-server:ready', {
+      origin: mediaServer.origin,
+      hasRandomPathSecret: Boolean(mediaServer.secret)
+    });
   } catch (error) {
+    diagnostics.log('main', 'media-server:fallback', {
+      error: error?.message || String(error)
+    }, 'error');
     console.warn(`[MediaServer] loopback proxy unavailable, using protocol fallback: ${error.message}`);
     mediaServer = null;
+    runtime.mediaServer = null;
     delete process.env.XT_MUSIC_MEDIA_BASE_URL;
   }
-  const transport = new HttpTransport();
+  const transport = diagnostics.instrumentTransport(new HttpTransport());
   sessionService = new SessionService({
     accountStore,
     runtime,
@@ -124,21 +153,42 @@ async function start() {
     settingsStore,
     hlsRegistry,
     mediaServer,
+    diagnostics,
     getMainWindow: () => runtime.mainWindow
   });
 
   runtime.mainWindow = createMainWindow(settingsStore, platformEnvironment);
+  diagnostics.attachWindow(runtime.mainWindow);
   runtime.rebuildTrayMenu = () => rebuildTray(runtime, () => {
     isQuitting = true;
     app.quit();
   });
   runtime.tray = createTray(runtime);
   runtime.rebuildTrayMenu();
+  diagnostics.startSampling(() => ({
+    runtime,
+    mediaServer,
+    window: runtime.mainWindow
+  }));
+
+  const copyShortcutRegistered = globalShortcut.register(
+    'CommandOrControl+Shift+L',
+    () => void copyDiagnosticLog(runtime)
+  );
+  const folderShortcutRegistered = globalShortcut.register(
+    'CommandOrControl+Shift+O',
+    () => void openDiagnosticFolder(runtime)
+  );
+  diagnostics.log('main', 'diagnostics:shortcuts-registered', {
+    copy: copyShortcutRegistered,
+    openFolder: folderShortcutRegistered
+  });
 
   runtime.mainWindow.on('close', (event) => {
     if (!isQuitting && runtime.tray && settingsStore.get('closeToTray')) {
       event.preventDefault();
       runtime.mainWindow.hide();
+      diagnostics.log('window', 'window:closed-to-tray', {}, 'debug');
     }
   });
 
@@ -165,12 +215,19 @@ async function start() {
 
   app.on('before-quit', () => {
     isQuitting = true;
-    mediaServer?.close().catch(() => {});
+    diagnostics.log('main', 'app:before-quit');
+    diagnostics.stopSampling();
+    globalShortcut.unregisterAll();
+    mediaServer?.close().catch((error) => {
+      diagnostics.log('main', 'media-server:close-error', { error: error?.message || String(error) }, 'warning');
+    });
+    diagnostics.flushSync();
   });
 
   app.on('activate', () => {
     if (!runtime.mainWindow || runtime.mainWindow.isDestroyed()) {
       runtime.mainWindow = createMainWindow(settingsStore, platformEnvironment);
+      diagnostics.attachWindow(runtime.mainWindow);
     } else {
       runtime.mainWindow.show();
     }
@@ -187,7 +244,7 @@ function createMainWindow(settingsStore, platformEnvironment = getPlatformEnviro
   const bounds = normalizeWindowBounds(validated || stored, platformEnvironment);
   const windowOptions = {
     ...bounds,
-    title: `XT Music ${app.getVersion()}`,
+    title: `XT Music ${app.getVersion()} Diagnostic`,
     minWidth: 1024,
     minHeight: 680,
     show: false,
@@ -238,7 +295,7 @@ function createTray(runtime) {
     const size = process.platform === 'linux' ? 22 : 20;
     image = image.resize({ width: size, height: size });
     const tray = new Tray(image);
-    tray.setToolTip(`XT Music ${app.getVersion()}`);
+    tray.setToolTip(`XT Music ${app.getVersion()} Diagnostic`);
 
     const toggleWindow = () => {
       const win = runtime.mainWindow;
@@ -254,6 +311,7 @@ function createTray(runtime) {
     else tray.on('double-click', toggleWindow);
     return tray;
   } catch (error) {
+    runtime.diagnostics?.log('main', 'tray:unavailable', { error: error?.message || String(error) }, 'warning');
     console.warn(`[Tray] unavailable: ${error.message}`);
     return null;
   }
@@ -297,14 +355,69 @@ function rebuildTray(runtime, quit) {
       click: () => send('next')
     },
     { type: 'separator' },
+    {
+      label: '复制诊断日志  Ctrl+Shift+L',
+      click: () => void copyDiagnosticLog(runtime)
+    },
+    {
+      label: '打开诊断日志目录  Ctrl+Shift+O',
+      click: () => void openDiagnosticFolder(runtime)
+    },
+    {
+      label: '记录即时诊断快照',
+      click: () => void runtime.diagnostics?.snapshot({
+        runtime,
+        mediaServer: runtime.mediaServer,
+        window: runtime.mainWindow,
+        reason: 'tray-snapshot'
+      })
+    },
+    { type: 'separator' },
     { label: '退出', click: quit }
   ]);
   runtime.tray.setContextMenu(menu);
   runtime.tray.setToolTip(
     player.title
       ? `${player.playing ? '正在播放' : '已暂停'}：${player.title}${player.artist ? ` · ${player.artist}` : ''}`
-      : `XT Music ${app.getVersion()}`
+      : `XT Music ${app.getVersion()} Diagnostic`
   );
+}
+
+async function copyDiagnosticLog(runtime) {
+  try {
+    await runtime.diagnostics?.snapshot({
+      runtime,
+      mediaServer: runtime.mediaServer,
+      window: runtime.mainWindow,
+      reason: 'copy-request'
+    });
+    const result = await runtime.diagnostics?.copyToClipboard();
+    if (result && runtime.tray && process.platform === 'win32') {
+      try {
+        runtime.tray.displayBalloon({
+          title: 'XT Music 诊断日志',
+          content: '日志已复制到剪贴板，可直接粘贴给我。',
+          noSound: true
+        });
+      } catch {
+        // Notification fallback is handled by Diagnostics.
+      }
+    }
+  } catch (error) {
+    runtime.diagnostics?.log('main', 'diagnostics:copy-failed', {
+      error: error?.message || String(error)
+    }, 'error');
+  }
+}
+
+async function openDiagnosticFolder(runtime) {
+  try {
+    await runtime.diagnostics?.openFolder();
+  } catch (error) {
+    runtime.diagnostics?.log('main', 'diagnostics:open-folder-failed', {
+      error: error?.message || String(error)
+    }, 'error');
+  }
 }
 
 function isTrustedUpgradeExecutable(candidate) {
