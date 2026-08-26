@@ -204,8 +204,15 @@ class XtMusicApp {
     });
     this.els.playerVolumeIcon.addEventListener('click', () => this.player.toggleMute());
     this.els.playerQueue.addEventListener('click', () => this.#toggleQueue());
-    this.els.playerLyrics.addEventListener('click', () => this.#navigate('lyrics'));
-    this.els.playerTitle.addEventListener('click', () => this.#navigate('lyrics'));
+    const openNowPlaying = () => this.#openNowPlaying();
+    this.els.playerCover.addEventListener('click', openNowPlaying);
+    this.els.playerCover.addEventListener('keydown', (event) => {
+      if (!['Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      openNowPlaying();
+    });
+    this.els.playerLyrics.addEventListener('click', openNowPlaying);
+    this.els.playerTitle.addEventListener('click', openNowPlaying);
     this.els.playerFavorite.addEventListener('click', () => this.#toggleFavorite(this.player.currentTrack));
 
     for (const eventName of ['state', 'track', 'queue']) {
@@ -605,6 +612,18 @@ class XtMusicApp {
     await this.#loadRoute(this.store.get().route);
   }
 
+  #openNowPlaying() {
+    if (!this.player.currentTrack) {
+      this.toast('请先播放一首歌曲', 'warning');
+      return;
+    }
+    if (this.store.get().route.name === 'lyrics') {
+      this.#syncLyrics(true);
+      return;
+    }
+    this.#navigate('lyrics');
+  }
+
   #navigate(name, params = {}) {
     if (name === 'lyrics' && !this.player.currentTrack) {
       this.toast('请先播放一首歌曲', 'warning');
@@ -723,7 +742,7 @@ class XtMusicApp {
         this.toast('缓存已清理', 'success');
         break;
       case 'open-lyrics':
-        this.#navigate('lyrics');
+        this.#openNowPlaying();
         break;
       case 'remove-queue':
         this.player.removeFromQueue(Number(target.dataset.index));
@@ -949,11 +968,19 @@ class XtMusicApp {
     const state = this.player.state;
     const track = state.track;
     const coverId = track?.coverId || track?.album?.coverId;
-    this.els.playerCover.innerHTML = coverId
+    const coverMarkup = coverId
       ? `<img src="${attr(coverUrl(coverId, 256))}" alt="">`
       : icon('music', 23);
+    this.els.playerCover.innerHTML = `${coverMarkup}<span class="now-playing-equalizer" aria-hidden="true"><i></i><i></i><i></i></span>`;
     this.els.playerCover.classList.toggle('cover-placeholder', !coverId);
+    this.els.playerCover.classList.toggle('is-clickable', Boolean(track));
+    this.els.playerCover.classList.toggle('is-playing', Boolean(track && state.playing));
+    this.els.playerCover.tabIndex = track ? 0 : -1;
+    this.els.playerCover.setAttribute('aria-disabled', String(!track));
+    this.els.playerCover.title = track ? '打开正在播放和歌词' : '播放歌曲后可打开歌词';
     this.els.playerTitle.textContent = track?.title || '选择一首歌曲';
+    this.els.playerTitle.disabled = !track;
+    this.els.playerTitle.title = track ? '打开正在播放和歌词' : '';
     this.els.playerArtist.textContent = track ? artistsText(track) : 'XT Music';
     this.els.playerFavorite.innerHTML = icon(track?.isFavorite ? 'heartFill' : 'heart', 17);
     this.els.playerFavorite.classList.toggle('is-favorite', Boolean(track?.isFavorite));
@@ -967,8 +994,11 @@ class XtMusicApp {
     this.els.playerShuffle.classList.toggle('is-active', state.shuffle);
     this.els.playerRepeat.innerHTML = icon(state.repeatMode === 'one' ? 'repeatOne' : 'repeat', 17);
     this.els.playerRepeat.classList.toggle('is-active', state.repeatMode !== 'off');
-    this.els.playerLyrics.innerHTML = icon('lyrics', 18);
+    this.els.playerLyrics.innerHTML = `${icon('lyrics', 18)}<span>歌词</span>`;
     this.els.playerLyrics.classList.toggle('is-active', this.store.get().route.name === 'lyrics');
+    this.els.playerLyrics.disabled = !track;
+    this.els.playerLyrics.title = track ? '打开正在播放和歌词' : '请先播放一首歌曲';
+    document.querySelector('#player-bar')?.classList.toggle('is-playing', Boolean(track && state.playing));
     this.els.playerVolumeIcon.innerHTML = icon(state.muted || state.volume === 0 ? 'mute' : 'volume', 18);
     this.els.playerQueue.innerHTML = icon('queue', 19);
     this.els.playerQueue.classList.toggle('is-active', this.store.get().queueOpen);

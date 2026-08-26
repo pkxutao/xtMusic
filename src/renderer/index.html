@@ -71,11 +71,11 @@
 
     <footer id="player-bar" class="player-bar">
       <div class="now-playing">
-        <div id="player-cover" class="player-cover cover-placeholder">
+        <div id="player-cover" class="player-cover cover-placeholder" role="button" tabindex="-1" aria-label="打开正在播放和歌词" aria-disabled="true" title="播放歌曲后可打开歌词">
           <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18V5l11-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="17" cy="16" r="3"></circle></svg>
         </div>
         <div class="now-playing-copy">
-          <button id="player-title" class="now-playing-title" data-action="open-lyrics">选择一首歌曲</button>
+          <button id="player-title" class="now-playing-title" type="button" title="打开正在播放和歌词">选择一首歌曲</button>
           <span id="player-artist">XT Music</span>
         </div>
         <button id="player-favorite" class="icon-button subtle" aria-label="收藏"></button>
@@ -97,7 +97,7 @@
       </div>
 
       <div class="player-tools">
-        <button id="player-lyrics" class="icon-button subtle" aria-label="歌词"></button>
+        <button id="player-lyrics" class="icon-button subtle player-lyrics-button" aria-label="打开歌词" title="打开正在播放和歌词"></button>
         <button id="player-volume-icon" class="icon-button subtle" aria-label="静音"></button>
         <input id="player-volume" class="range volume-range" type="range" min="0" max="100" value="82" aria-label="音量">
         <button id="player-queue" class="icon-button subtle" aria-label="播放队列"></button>

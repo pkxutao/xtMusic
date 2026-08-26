@@ -78,7 +78,9 @@ contextBridge.exposeInMainWorld('xtMusic', Object.freeze({
         return { list: playlists, total: playlists.length };
       }
       if (method === 'getTracks') return { list: tracks, total: tracks.length };
-      if (method === 'getLyrics') return { text: '' };
+      if (method === 'getLyrics') {
+        return { text: '[00:00.00]第一行歌词\n[00:00.80]第二行歌词\n[00:01.60]第三行歌词' };
+      }
       if (['reportPlay', 'favorite', 'unfavorite', 'quitTranscode'].includes(method)) return true;
       if (method === 'startTranscode') throw new Error('transcode should not be used');
       return { list: [], total: 0 };
