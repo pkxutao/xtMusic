@@ -75,21 +75,6 @@ jobs:
           Get-Content 'release/SHA256SUMS-Windows.txt'
           Get-Content 'ui-proof/windows-large-library-smoke.json'
 
-      - id: commit
-        name: Commit validated large-library hotfix
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm -f --ignore-unmatch .github/workflows/apply-large-library-hotfix.yml scripts/apply-large-library-hotfix.js scripts/apply-large-library-hotfix-v2.js
-          git add -A
-          git status --short
-          git commit -m 'fix: bound large music libraries and dispose stale routes'
-          SHA="$(git rev-parse HEAD)"
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          git push origin HEAD:fix/large-library-0.3.5
-
       - uses: actions/upload-artifact@v4
         with:
           name: XT-Music-Windows-Large-Library-0.3.5
@@ -105,3 +90,21 @@ jobs:
             ui-proof/windows-large-library-smoke.json
           if-no-files-found: error
           retention-days: 30
+
+      - id: commit
+        name: Commit validated business-source hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -- .github/workflows
+          git rm -f --ignore-unmatch scripts/apply-large-library-hotfix.js scripts/apply-large-library-hotfix-v2.js
+          git add package.json package-lock.json src/renderer/app.js src/renderer/views.js src/renderer/styles.css
+          git add tests/large-library-pagination.test.js scripts/windows-large-library-preload.js scripts/windows-large-library-smoke.js
+          git add ui-proof/windows-large-library-smoke.json
+          git status --short
+          git commit -m 'fix: bound large music libraries and dispose stale routes'
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          git push origin HEAD:fix/large-library-0.3.5
