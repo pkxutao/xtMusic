@@ -45,6 +45,33 @@ jobs:
           test "$ACTUAL" = "2026b835fe792dc624f631a4051ac723c77d281744842cdca4aa6c92086e7bae"
           tar -xzf /tmp/hotfix.tar.gz -C .
 
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'src/renderer/app.js';
+          let source = fs.readFileSync(path, 'utf8');
+
+          if (!source.includes('configureMediaBaseUrl,')) {
+            const importPattern = /(import \{\r?\n\s*artistsText,\r?\n\s*attr,\r?\n)/;
+            if (!importPattern.test(source)) {
+              throw new Error('Unable to locate the renderer utility import block');
+            }
+            source = source.replace(importPattern, '$1  configureMediaBaseUrl,\n');
+          }
+
+          if (!source.includes('configureMediaBaseUrl(bootstrap.mediaBaseUrl);')) {
+            const bootstrapPattern = /(\s+const bootstrap = await api\.bootstrap\(\);\r?\n)/;
+            if (!bootstrapPattern.test(source)) {
+              throw new Error('Unable to locate renderer bootstrap initialization');
+            }
+            source = source.replace(
+              bootstrapPattern,
+              '$1      configureMediaBaseUrl(bootstrap.mediaBaseUrl);\n'
+            );
+          }
+
+          fs.writeFileSync(path, source, 'utf8');
+          NODE
+
           cat > tests/playback-routing.test.js <<'EOF'
           'use strict';
 
@@ -77,6 +104,7 @@ jobs:
             assert.match(html, /img-src[^;]*http:\/\/127\.0\.0\.1:\*/);
             assert.match(utils, /parsed\.hostname !== '127\.0\.0\.1'/);
             assert.match(utils, /mediaResourceUrl\('stream', guid\)/);
+            assert.match(app, /configureMediaBaseUrl,/);
             assert.match(app, /configureMediaBaseUrl\(bootstrap\.mediaBaseUrl\)/);
           });
 
