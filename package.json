@@ -1,7 +1,7 @@
 {
   "name": "xtmusic",
-  "version": "0.3.3",
-  "description": "Windows responsiveness hotfix that removes post-login blocking, bounds hidden queue rendering, and restores stable cover caching.",
+  "version": "0.3.4",
+  "description": "Windows diagnostic build with privacy-safe main, renderer, IPC, network, memory and freeze logging.",
   "main": "src/main/index.js",
   "type": "commonjs",
   "author": "pkxutao",
@@ -96,7 +96,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "XT Music",
+      "shortcutName": "XT Music Diagnostic",
       "deleteAppDataOnUninstall": false
     },
     "portable": {
