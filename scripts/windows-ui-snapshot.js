@@ -60,7 +60,6 @@ function mockMarkup() {
 }
 
 app.commandLine.appendSwitch('disable-gpu');
-app.commandLine.appendSwitch('disable-software-rasterizer');
 
 app.whenReady().then(async () => {
   fs.mkdirSync(proofDir, { recursive: true });
