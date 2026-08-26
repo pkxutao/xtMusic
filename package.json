@@ -1,7 +1,7 @@
 {
   "name": "xtmusic",
-  "version": "0.2.5",
-  "description": "A fast, security-conscious Windows and Ubuntu desktop client for FNOS Music.",
+  "version": "0.3.1",
+  "description": "Windows UI hotfix for XT Music, restoring the validated desktop renderer and interaction model.",
   "main": "src/main/index.js",
   "type": "commonjs",
   "author": "pkxutao",
