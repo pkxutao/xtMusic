@@ -18,6 +18,7 @@ const { SessionService } = require('./services/session-service');
 const { Runtime } = require('./services/runtime');
 const { HlsRegistry } = require('./services/hls-registry');
 const { registerMediaProtocol } = require('./media-protocol');
+const { MediaServer } = require('./media-server');
 const { registerIpc } = require('./ipc');
 const {
   getPlatformEnvironment,
@@ -39,6 +40,9 @@ protocol.registerSchemesAsPrivileged([
     }
   }
 ]);
+
+// Desktop playback must continue from tray/media-key commands as well as direct clicks.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 app.setName('XT Music');
 if (process.platform === 'win32') {
@@ -63,6 +67,7 @@ async function start() {
   let settingsStore;
   let sessionService;
   let hlsRegistry;
+  let mediaServer;
   let isQuitting = false;
 
   app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
@@ -95,6 +100,15 @@ async function start() {
   accountStore = new SecureAccountStore(app.getPath('userData'));
   settingsStore = new SettingsStore(app.getPath('userData'));
   hlsRegistry = new HlsRegistry();
+  mediaServer = new MediaServer({ runtime, hlsRegistry });
+  try {
+    await mediaServer.start();
+    process.env.XT_MUSIC_MEDIA_BASE_URL = mediaServer.baseUrl;
+  } catch (error) {
+    console.warn(`[MediaServer] loopback proxy unavailable, using protocol fallback: ${error.message}`);
+    mediaServer = null;
+    delete process.env.XT_MUSIC_MEDIA_BASE_URL;
+  }
   const transport = new HttpTransport();
   sessionService = new SessionService({
     accountStore,
@@ -109,6 +123,7 @@ async function start() {
     accountStore,
     settingsStore,
     hlsRegistry,
+    mediaServer,
     getMainWindow: () => runtime.mainWindow
   });
 
@@ -150,6 +165,7 @@ async function start() {
 
   app.on('before-quit', () => {
     isQuitting = true;
+    mediaServer?.close().catch(() => {});
   });
 
   app.on('activate', () => {

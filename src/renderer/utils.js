@@ -1,3 +1,53 @@
+let mediaBaseUrl = resolveInitialMediaBaseUrl();
+
+function resolveInitialMediaBaseUrl() {
+  try {
+    const value = globalThis.window?.xtMusic?.environment?.mediaBaseUrl;
+    if (!value) return '';
+    const parsed = new URL(String(value));
+    if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1') return '';
+    if (!parsed.port || parsed.pathname.length < 20) return '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+}
+
+export function configureMediaBaseUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    mediaBaseUrl = '';
+    return;
+  }
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new Error('本机媒体代理地址格式不正确');
+  }
+  if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1') {
+    throw new Error('本机媒体代理必须仅监听 127.0.0.1');
+  }
+  if (!parsed.port || parsed.pathname.length < 20) {
+    throw new Error('本机媒体代理地址不完整');
+  }
+  parsed.search = '';
+  parsed.hash = '';
+  mediaBaseUrl = parsed.toString().replace(/\/+$/, '');
+}
+
+export function currentMediaBaseUrl() {
+  return mediaBaseUrl;
+}
+
+function mediaResourceUrl(kind, id, query = null) {
+  const value = encodeURIComponent(String(id || ''));
+  if (!mediaBaseUrl) return `xtmusic://${kind}/${value}${query || ''}`;
+  return `${mediaBaseUrl}/${kind}/${value}${query || ''}`;
+}
+
 export function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -58,12 +108,12 @@ export function trackDuration(track) {
 
 export function coverUrl(coverId, size = 480) {
   return coverId
-    ? `xtmusic://cover/${encodeURIComponent(coverId)}?size=${Math.round(size)}`
+    ? mediaResourceUrl('cover', coverId, `?size=${Math.round(size)}`)
     : '';
 }
 
 export function streamUrl(guid) {
-  return `xtmusic://stream/${encodeURIComponent(guid)}`;
+  return mediaResourceUrl('stream', guid);
 }
 
 export function initials(value) {

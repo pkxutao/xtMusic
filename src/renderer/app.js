@@ -21,6 +21,7 @@ import {
 import {
   artistsText,
   attr,
+  configureMediaBaseUrl,
   coverUrl,
   debounce,
   escapeHtml,
@@ -104,6 +105,7 @@ class XtMusicApp {
 
     try {
       const bootstrap = await api.bootstrap();
+      configureMediaBaseUrl(bootstrap.mediaBaseUrl);
       this.store.set({
         bootstrapping: false,
         session: bootstrap.session,

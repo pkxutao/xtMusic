@@ -38,13 +38,15 @@ function registerIpc({
   accountStore,
   settingsStore,
   hlsRegistry,
+  mediaServer,
   getMainWindow
 }) {
   handle('app:bootstrap', async () => ({
     ...(await sessionService.bootstrap()),
     settings: settingsStore.all(),
     platform: process.platform,
-    version: require('../../package.json').version
+    version: require('../../package.json').version,
+    mediaBaseUrl: mediaServer?.baseUrl || null
   }));
 
   handle('auth:connect', async (event, payload) => {
@@ -70,7 +72,7 @@ function registerIpc({
       const result = await client.startTranscode(args);
       const key = hlsRegistry.register(args.guid, result.sourceUrl);
       return {
-        url: `xtmusic://hls/${key}/index.m3u8`,
+        url: mediaServer?.hlsUrl(key) || `xtmusic://hls/${key}/index.m3u8`,
         codec: result.codec
       };
     }
@@ -85,6 +87,12 @@ function registerIpc({
     key,
     value: settingsStore.set(String(key || ''), value)
   }));
+
+  handle('player:diagnostics', async () => mediaServer?.diagnostics() || {
+    running: false,
+    origin: null,
+    recentErrors: []
+  });
 
   handle('cache:clear', async () => {
     await session.defaultSession.clearCache();
