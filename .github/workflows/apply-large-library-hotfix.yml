@@ -33,6 +33,10 @@ jobs:
       - name: Apply bounded-library source changes
         run: node scripts/apply-large-library-hotfix-v2.js
 
+      - name: Remove obsolete transient applicator
+        shell: pwsh
+        run: Remove-Item -LiteralPath 'scripts/apply-large-library-hotfix.js' -Force
+
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
@@ -78,7 +82,7 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm .github/workflows/apply-large-library-hotfix.yml scripts/apply-large-library-hotfix.js scripts/apply-large-library-hotfix-v2.js
+          git rm -f --ignore-unmatch .github/workflows/apply-large-library-hotfix.yml scripts/apply-large-library-hotfix.js scripts/apply-large-library-hotfix-v2.js
           git add -A
           git status --short
           git commit -m 'fix: bound large music libraries and dispose stale routes'
