@@ -14,7 +14,7 @@ const preinstallSource = fs.readFileSync(
 );
 
 test('Ubuntu DEB runs the stale-process guard before replacing the app', () => {
-  assert.equal(packageJson.version, '0.2.5');
+  assert.match(packageJson.version, /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/);
   assert.ok(
     packageJson.build.deb.fpm.includes('--before-install=build/linux-before-install.sh')
   );
