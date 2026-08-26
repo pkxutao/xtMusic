@@ -1,17 +1,18 @@
 'use strict';
 
 const { contextBridge, ipcRenderer } = require('electron');
-const { performance } = require('node:perf_hooks');
+
+const now = () => globalThis.performance?.now?.() ?? Date.now();
 
 async function invoke(channel, payload) {
-  const started = performance.now();
+  const started = now();
   const details = safeIpcDetails(channel, payload);
   if (!channel.startsWith('diagnostics:')) {
     sendDiagnostic(`${channel}:invoke-start`, details, 'debug');
   }
   try {
     const result = await ipcRenderer.invoke(channel, payload);
-    const durationMs = round(performance.now() - started);
+    const durationMs = round(now() - started);
     if (!channel.startsWith('diagnostics:')) {
       sendDiagnostic(
         `${channel}:${result?.ok ? 'invoke-success' : 'invoke-error'}`,
@@ -36,7 +37,7 @@ async function invoke(channel, payload) {
     if (!channel.startsWith('diagnostics:')) {
       sendDiagnostic(`${channel}:invoke-rejected`, {
         ...details,
-        durationMs: round(performance.now() - started),
+        durationMs: round(now() - started),
         error: {
           name: error?.name,
           code: error?.code,
