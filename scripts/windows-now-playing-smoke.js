@@ -17,7 +17,7 @@ let becameUnresponsive = false;
 
 app.whenReady().then(async () => {
   fs.mkdirSync(proofDir, { recursive: true });
-  const media = await startMediaServer(createWavBuffer(22050, 3));
+  const media = await startMediaServer(createWavBuffer(22050, 30));
   server = media.server;
   process.env.XT_MUSIC_POST_LOGIN_MEDIA_BASE_URL = media.baseUrl;
 
@@ -43,6 +43,7 @@ app.whenReady().then(async () => {
   await waitFor(() => execute("Boolean(document.querySelector('.tracks-page [data-action=\"play-all\"]'))"), 5000, 'tracks page');
   await execute("document.querySelector('.tracks-page [data-action=\"play-all\"]')?.click()");
   await waitFor(() => execute("document.querySelector('#player-title')?.textContent === '曲目 1'"), 5000, 'active track');
+  await waitFor(() => execute("document.querySelector('#player-cover')?.classList.contains('is-playing')"), 5000, 'playing visual state');
   await waitFor(() => execute("document.querySelectorAll('.now-playing-equalizer i').length === 3"), 3000, 'playing indicator');
 
   const entry = await execute(`(() => ({
