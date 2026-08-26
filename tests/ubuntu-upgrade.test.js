@@ -30,5 +30,5 @@ test('new instances identify their version and can replace a stale tray process'
   assert.match(indexSource, /additionalData\?\.version/);
   assert.match(indexSource, /incomingVersion !== app\.getVersion\(\)/);
   assert.match(indexSource, /app\.relaunch\(\{ execPath: incomingExecutable, args: \[\] \}\)/);
-  assert.match(indexSource, /title: `XT Music \$\{app\.getVersion\(\)\}`/);
+  assert.match(indexSource, /title: `XT Music \$\{app\.getVersion\(\)\}(?: Diagnostic)?`/);
 });
