@@ -2527,3 +2527,50 @@ select:focus-visible,
     contain-intrinsic-size: 220px 180px;
   }
 }
+
+.library-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 26px 0 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+}
+
+.library-pagination > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.library-pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.library-pagination-actions strong {
+  min-width: 72px;
+  text-align: center;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.library-pagination button:disabled {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .library-pagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .library-pagination-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}

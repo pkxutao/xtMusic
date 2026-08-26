@@ -238,7 +238,15 @@ export function homeView(data, session) {
   `;
 }
 
-export function gridPageView({ title, subtitle, items, kind, total = 0, iconName = 'album' }) {
+export function gridPageView({
+  title,
+  subtitle,
+  items,
+  kind,
+  total = 0,
+  pagination = null,
+  iconName = 'album'
+}) {
   return `
     <div class="page library-page">
       <div class="page-heading">
@@ -254,11 +262,19 @@ export function gridPageView({ title, subtitle, items, kind, total = 0, iconName
       <div class="media-grid ${kind === 'artist' ? 'artist-grid' : ''}">
         ${items.map((item) => mediaCard(item, kind)).join('') || emptyState(iconName, `没有${title}`)}
       </div>
+      ${paginationView(pagination)}
     </div>
   `;
 }
 
-export function trackPageView({ title, subtitle, tracks, kind = 'tracks', actionLabel = null }) {
+export function trackPageView({
+  title,
+  subtitle,
+  tracks,
+  kind = 'tracks',
+  actionLabel = null,
+  pagination = null
+}) {
   return `
     <div class="page tracks-page">
       <div class="page-heading track-page-heading">
@@ -276,11 +292,12 @@ export function trackPageView({ title, subtitle, tracks, kind = 'tracks', action
         </div>
       </div>
       ${tracks.length ? '<div id="track-table-host" class="track-table-host"></div>' : emptyState('music', '这里还没有歌曲')}
+      ${paginationView(pagination)}
     </div>
   `;
 }
 
-export function detailView({ kind, item, tracks }) {
+export function detailView({ kind, item, tracks, pagination = null }) {
   const title = item.name || item.title || '未知';
   const coverId = item.coverId || tracks?.[0]?.coverId || tracks?.[0]?.album?.coverId;
   const meta = detailMeta(kind, item, tracks);
@@ -308,6 +325,7 @@ export function detailView({ kind, item, tracks }) {
           <div><h2>歌曲</h2><span>${tracks.length} 首</span></div>
         </div>
         ${tracks.length ? '<div id="track-table-host" class="track-table-host detail-table"></div>' : emptyState('music', '没有可播放的歌曲')}
+        ${paginationView(pagination)}
       </section>
     </div>
   `;
@@ -497,6 +515,26 @@ export function promptModal({ title, label, value = '', action, danger = false, 
         </form>
       </section>
     </div>
+  `;
+}
+
+function paginationView(pagination) {
+  if (!pagination || Number(pagination.pages || 1) <= 1) return '';
+  const page = Math.max(1, Number(pagination.page || 1));
+  const pages = Math.max(1, Number(pagination.pages || 1));
+  const previous = Math.max(1, page - 1);
+  const next = Math.min(pages, page + 1);
+  return `
+    <nav class="library-pagination" aria-label="音乐库分页">
+      <span>第 ${pagination.start || 0}–${pagination.end || 0} 项，共 ${pagination.total || 0} 项</span>
+      <div class="library-pagination-actions">
+        <button class="secondary-button compact" data-action="library-page" data-page="1" ${page <= 1 ? 'disabled' : ''}>${icon('chevronLeft', 15)}首页</button>
+        <button class="secondary-button compact" data-action="library-page" data-page="${previous}" ${page <= 1 ? 'disabled' : ''}>上一页</button>
+        <strong>${page} / ${pages}</strong>
+        <button class="secondary-button compact" data-action="library-page" data-page="${next}" ${page >= pages ? 'disabled' : ''}>下一页</button>
+        <button class="secondary-button compact" data-action="library-page" data-page="${pages}" ${page >= pages ? 'disabled' : ''}>末页${icon('chevronRight', 15)}</button>
+      </div>
+    </nav>
   `;
 }
 

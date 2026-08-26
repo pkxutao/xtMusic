@@ -35,6 +35,9 @@ import {
 const INITIAL_PLAYLIST_LIMIT = 120;
 const INITIAL_PLAYLIST_TIMEOUT_MS = 8000;
 const MAX_QUEUE_ROWS = 160;
+const GRID_PAGE_SIZE = 72;
+const TRACK_PAGE_SIZE = 400;
+const DETAIL_TRACK_PAGE_SIZE = 400;
 
 class XtMusicApp {
   constructor() {
@@ -235,6 +238,14 @@ class XtMusicApp {
     this.requestSerial += 1;
     this.playlistLoadSerial += 1;
     this.sidebarSignature = '';
+    this.currentTable?.destroy();
+    this.currentTable = null;
+    this.currentTracks = [];
+    this.currentItems = [];
+    this.currentDetail = null;
+    this.els.content.replaceChildren();
+    this.els.sidebar.replaceChildren();
+    this.els.queue.replaceChildren();
     const state = this.store.get();
     this.els.shell.classList.add('is-hidden');
     this.els.loginRoot.classList.remove('is-hidden');
@@ -365,37 +376,62 @@ class XtMusicApp {
   }
 
   async #fetchRouteData(route) {
+    const page = normalizePage(route.params?.page);
     switch (route.name) {
       case 'home':
         return api.music('getHome');
       case 'tracks':
-        return { list: await this.#fetchAll('getTracks', {}, 500, 30000) };
+        return normalizePageResult(
+          await api.music('getTracks', { page, size: TRACK_PAGE_SIZE }),
+          page,
+          TRACK_PAGE_SIZE
+        );
       case 'albums':
-        return { list: await this.#fetchAll('getAlbums', {}, 300, 15000) };
+        return normalizePageResult(
+          await api.music('getAlbums', { page, size: GRID_PAGE_SIZE }),
+          page,
+          GRID_PAGE_SIZE
+        );
       case 'artists':
-        return { list: await this.#fetchAll('getArtists', {}, 300, 15000) };
+        return normalizePageResult(
+          await api.music('getArtists', { page, size: GRID_PAGE_SIZE }),
+          page,
+          GRID_PAGE_SIZE
+        );
       case 'genres':
-        return { list: await this.#fetchAll('getGenres', {}, 300, 5000) };
+        return normalizePageResult(
+          await api.music('getGenres', { page, size: GRID_PAGE_SIZE }),
+          page,
+          GRID_PAGE_SIZE
+        );
       case 'favorites':
-        return { list: await this.#fetchAll('getFavorites', {}, 500, 30000) };
+        return normalizePageResult(
+          await api.music('getFavorites', { page, size: TRACK_PAGE_SIZE }),
+          page,
+          TRACK_PAGE_SIZE
+        );
       case 'history':
-        return { list: await this.#fetchAll('getHistory', {}, 500, 30000) };
+        return normalizePageResult(
+          await api.music('getHistory', { page, size: TRACK_PAGE_SIZE }),
+          page,
+          TRACK_PAGE_SIZE
+        );
       case 'search':
         return api.music('search', { query: route.params.query, page: 1, size: 100 });
       case 'album':
-        return this.#detailData('album', route.params);
+        return this.#detailData('album', route.params, page);
       case 'artist':
-        return this.#detailData('artist', route.params);
+        return this.#detailData('artist', route.params, page);
       case 'genre':
-        return this.#detailData('genre', route.params);
+        return this.#detailData('genre', route.params, page);
       case 'playlist':
-        return this.#detailData('playlist', route.params);
+        return this.#detailData('playlist', route.params, page);
       default:
         return api.music('getHome');
     }
   }
 
-  async #detailData(kind, params) {
+  async #detailData(kind, params, page = 1) {
     const item = params.item || this.#findKnownItem(kind, params.guid) || {
       guid: params.guid,
       name: params.name || detailFallback(kind)
@@ -412,8 +448,17 @@ class XtMusicApp {
       genre: 'genreGUID',
       playlist: 'playlistGUID'
     }[kind];
-    const tracks = await this.#fetchAll(method, { [key]: params.guid }, 500, 30000);
-    return { item, tracks };
+    const result = await api.music(method, {
+      [key]: params.guid,
+      page,
+      size: DETAIL_TRACK_PAGE_SIZE
+    });
+    const paged = normalizePageResult(result, page, DETAIL_TRACK_PAGE_SIZE);
+    return {
+      item,
+      tracks: paged.list,
+      pagination: paged.pagination
+    };
   }
 
   async #fetchAll(method, args = {}, pageSize = 500, hardLimit = 30000) {
@@ -441,32 +486,52 @@ class XtMusicApp {
         this.els.content.innerHTML = homeView(data, this.store.get().session);
         break;
       case 'tracks':
-        this.#renderTrackRoute('所有歌曲', `${data.list.length} 首来自飞牛音乐库的歌曲`, data.list);
+        this.#renderTrackRoute(
+          '所有歌曲',
+          pageSummary(data.pagination, '首歌曲'),
+          data.list,
+          data.pagination,
+          '播放本页'
+        );
         break;
       case 'favorites':
-        this.#renderTrackRoute('我喜欢的音乐', `${data.list.length} 首已收藏歌曲`, data.list);
+        this.#renderTrackRoute(
+          '我喜欢的音乐',
+          pageSummary(data.pagination, '首收藏'),
+          data.list,
+          data.pagination,
+          '播放本页'
+        );
         break;
       case 'history':
-        this.#renderTrackRoute('最近播放', `${data.list.length} 条播放记录`, data.list);
+        this.#renderTrackRoute(
+          '最近播放',
+          pageSummary(data.pagination, '条记录'),
+          data.list,
+          data.pagination,
+          '播放本页'
+        );
         break;
       case 'albums':
         this.currentItems = data.list;
         this.els.content.innerHTML = gridPageView({
           title: '专辑',
-          subtitle: `${data.list.length} 张专辑`,
+          subtitle: pageSummary(data.pagination, '张专辑'),
           items: data.list,
           kind: 'album',
-          total: data.list.length
+          total: data.pagination.total,
+          pagination: data.pagination
         });
         break;
       case 'artists':
         this.currentItems = data.list;
         this.els.content.innerHTML = gridPageView({
           title: '歌手',
-          subtitle: `${data.list.length} 位歌手`,
+          subtitle: pageSummary(data.pagination, '位歌手'),
           items: data.list,
           kind: 'artist',
-          total: data.list.length,
+          total: data.pagination.total,
+          pagination: data.pagination,
           iconName: 'artist'
         });
         break;
@@ -474,10 +539,11 @@ class XtMusicApp {
         this.currentItems = data.list;
         this.els.content.innerHTML = gridPageView({
           title: '风格',
-          subtitle: `${data.list.length} 个音乐风格`,
+          subtitle: pageSummary(data.pagination, '个音乐风格'),
           items: data.list,
           kind: 'genre',
-          total: data.list.length,
+          total: data.pagination.total,
+          pagination: data.pagination,
           iconName: 'genre'
         });
         break;
@@ -496,7 +562,8 @@ class XtMusicApp {
         this.els.content.innerHTML = detailView({
           kind: route.name,
           item: data.item,
-          tracks: data.tracks
+          tracks: data.tracks,
+          pagination: data.pagination
         });
         this.#mountTrackTable(data.tracks);
         break;
@@ -506,9 +573,15 @@ class XtMusicApp {
     this.els.content.scrollTop = 0;
   }
 
-  #renderTrackRoute(title, subtitle, tracks) {
+  #renderTrackRoute(title, subtitle, tracks, pagination = null, actionLabel = null) {
     this.currentTracks = tracks;
-    this.els.content.innerHTML = trackPageView({ title, subtitle, tracks });
+    this.els.content.innerHTML = trackPageView({
+      title,
+      subtitle,
+      tracks,
+      pagination,
+      actionLabel
+    });
     this.#mountTrackTable(tracks);
   }
 
@@ -521,6 +594,15 @@ class XtMusicApp {
       onAction: (action, index, track, event) => this.#handleTrackAction(action, track, tracks, index, event),
       onContext: (event, index, track) => this.#showTrackContext(event, track, tracks, index)
     });
+  }
+
+  async #changeLibraryPage(rawPage) {
+    const current = this.store.get().route;
+    const page = normalizePage(rawPage);
+    if (page === normalizePage(current.params?.page)) return;
+    this.store.navigate(current.name, { ...current.params, page }, { replace: true });
+    this.#renderChrome();
+    await this.#loadRoute(this.store.get().route);
   }
 
   #navigate(name, params = {}) {
@@ -607,6 +689,9 @@ class XtMusicApp {
       case 'refresh':
         this.cache.delete(routeKey(this.store.get().route));
         await this.#loadRoute(this.store.get().route, { force: true });
+        break;
+      case 'library-page':
+        await this.#changeLibraryPage(target.dataset.page);
         break;
       case 'accounts':
         this.#showAccounts();
@@ -1209,6 +1294,35 @@ function queueRenderWindow(queue, currentIndex, limit) {
     omitted: true,
     items: list.slice(start, end).map((track, offset) => ({ track, index: start + offset }))
   };
+}
+
+function normalizePage(value) {
+  const page = Number.parseInt(String(value || 1), 10);
+  return Number.isFinite(page) && page > 0 ? page : 1;
+}
+
+function normalizePageResult(result, requestedPage, pageSize) {
+  const list = Array.isArray(result?.list) ? result.list : [];
+  const total = Math.max(0, Number(result?.total || list.length));
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(normalizePage(requestedPage), pages);
+  return {
+    list,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      pages,
+      start: total ? (page - 1) * pageSize + 1 : 0,
+      end: total ? Math.min(total, (page - 1) * pageSize + list.length) : 0
+    }
+  };
+}
+
+function pageSummary(pagination, unit) {
+  const page = pagination || {};
+  if (!page.total) return `0 ${unit}`;
+  return `第 ${page.start}–${page.end} ${unit}，共 ${page.total} ${unit}`;
 }
 
 function routeKey(route) {

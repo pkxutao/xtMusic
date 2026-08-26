@@ -1,7 +1,7 @@
 {
   "name": "xtmusic",
-  "version": "0.3.4",
-  "description": "Windows diagnostic build with privacy-safe main, renderer, IPC, network, memory and freeze logging.",
+  "version": "0.3.5",
+  "description": "Large-library performance hotfix with bounded pagination, stale-route disposal, and lazy cover loading.",
   "main": "src/main/index.js",
   "type": "commonjs",
   "author": "pkxutao",
