@@ -49,6 +49,9 @@ jobs:
       - name: Exercise real Chromium media loading through loopback proxy
         run: npx electron scripts/windows-media-smoke.js
 
+      - name: Exercise delayed login, 5000 playlists and 2000-song queue
+        run: npx electron scripts/windows-post-login-smoke.js
+
       - name: Build Windows installer and portable package
         run: npm run dist:win
 
@@ -61,6 +64,7 @@ jobs:
           if ($installer.Length -lt 50000000) { throw "Installer is unexpectedly small: $($installer.Length)" }
           if ($portable.Length -lt 50000000) { throw "Portable package is unexpectedly small: $($portable.Length)" }
           if (-not (Test-Path 'ui-proof/windows-media-smoke.json')) { throw 'Missing media smoke proof' }
+          if (-not (Test-Path 'ui-proof/windows-post-login-smoke.json')) { throw 'Missing post-login responsiveness proof' }
           Get-FileHash $installer.FullName, $portable.FullName -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
             Set-Content 'release/SHA256SUMS-Windows.txt'
@@ -75,5 +79,6 @@ jobs:
             ui-proof/windows-ui-metrics.json
             ui-proof/windows-ui-snapshot.png
             ui-proof/windows-media-smoke.json
+            ui-proof/windows-post-login-smoke.json
           if-no-files-found: error
           retention-days: 14
