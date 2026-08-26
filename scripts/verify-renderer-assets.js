@@ -49,8 +49,8 @@ const requiredSelectors = {
     '.home-hero',
     '.track-table-row'
   ],
-  'platform.css': [':root[data-platform="win32"]'],
-  'lyrics-experience.css': ['.lyrics-experience']
+  'platform.css': [':root[data-platform="linux"]'],
+  'lyrics-experience.css': ['.lyrics-experience-active']
 };
 
 for (const [file, selectors] of Object.entries(requiredSelectors)) {
