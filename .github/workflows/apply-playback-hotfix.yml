@@ -117,11 +117,11 @@ jobs:
           });
           EOF
 
-          rm -rf .playback-hotfix .github/workflows/apply-playback-hotfix.yml
+          rm -rf .playback-hotfix
+          rm -f .github/workflows/windows-playback-hotfix.yml
           test "$(node -p "require('./package.json').version")" = "0.3.2"
           test -f src/main/media-server.js
           test -f scripts/windows-media-smoke.js
-          test -f .github/workflows/windows-playback-hotfix.yml
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -164,7 +164,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -u
-          git add package.json src tests scripts releases .github/workflows
+          git add package.json src tests scripts releases
           git status --short
           git commit -m 'fix: replace custom media scheme with secure loopback playback proxy'
           SHA="$(git rev-parse HEAD)"
