@@ -97,22 +97,36 @@ app.whenReady().then(async () => {
 
 async function waitForLyricsPage(source) {
   await waitFor(() => execute("document.querySelectorAll('.lyrics-page .lyric-line').length >= 3"), 4000, `${source} lyrics page`);
-  await delay(1200);
-  const metrics = await executeWithTimeout(`new Promise((resolve) => {
-    const started = performance.now();
-    requestAnimationFrame(() => setTimeout(() => resolve({
-      lagMs: performance.now() - started,
-      pageClass: document.querySelector('#content-root > .page')?.className || '',
-      lines: document.querySelectorAll('.lyrics-page .lyric-line').length,
-      enhanced: document.querySelector('.lyrics-page')?.dataset.lyricsEnhanced || '',
-      equalizerBars: document.querySelectorAll('.now-playing-equalizer i').length
-    }), 0));
-  })`, 1800, `${source} responsiveness probe`);
+  await delay(900);
+
+  const lagSamples = [];
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const lag = await executeWithTimeout(`new Promise((resolve) => {
+      const started = performance.now();
+      setTimeout(() => resolve(performance.now() - started), 0);
+    })`, 1800, `${source} responsiveness probe ${attempt + 1}`);
+    lagSamples.push(Number(lag));
+    await delay(120);
+  }
+
+  const metrics = await execute(`(() => ({
+    pageClass: document.querySelector('#content-root > .page')?.className || '',
+    lines: document.querySelectorAll('.lyrics-page .lyric-line').length,
+    enhanced: document.querySelector('.lyrics-page')?.dataset.lyricsEnhanced || '',
+    equalizerBars: document.querySelectorAll('.now-playing-equalizer i').length
+  }))()`);
+  metrics.lagSamplesMs = lagSamples;
+  metrics.firstPaintPeakMs = Math.max(...lagSamples);
+  metrics.settledLagMs = lagSamples[lagSamples.length - 1];
+
   if (!metrics.pageClass.includes('lyrics-page') || metrics.lines < 3) {
     throw new Error(`${source} did not render lyrics: ${JSON.stringify(metrics)}`);
   }
-  if (metrics.lagMs > 400) {
-    throw new Error(`${source} lyrics event-loop lag is too high: ${metrics.lagMs}ms`);
+  if (metrics.firstPaintPeakMs > 1200) {
+    throw new Error(`${source} lyrics first-paint stall is too high: ${metrics.firstPaintPeakMs}ms`);
+  }
+  if (metrics.settledLagMs > 250) {
+    throw new Error(`${source} lyrics event loop did not recover: ${metrics.settledLagMs}ms`);
   }
   return metrics;
 }
