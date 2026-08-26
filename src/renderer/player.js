@@ -11,22 +11,27 @@ import {
 const QUEUE_STORAGE_KEY = 'xtmusic.player.queue.v1';
 
 export class Player extends EventTarget {
-  constructor({ musicCall, publishState, onVolumeChange }) {
+  constructor({ musicCall, publishState, onVolumeChange, diagnostics }) {
     super();
     this.musicCall = musicCall;
     this.publishState = publishState;
     this.onVolumeChange = onVolumeChange;
+    this.diagnostics = diagnostics;
     this.audio = new Audio();
     this.audio.preload = 'auto';
     this.audio.autoplay = false;
-    this.audio.crossOrigin = 'anonymous';
+    this.audio.disableRemotePlayback = true;
     this.queue = [];
     this.index = -1;
     this.repeatMode = 'off';
     this.shuffle = false;
     this.hls = null;
     this.transcodeGuid = null;
-    this.fallbackAttempted = new Set();
+    this.loadSerial = 0;
+    this.sourceMode = 'idle';
+    this.fallbackInProgress = false;
+    this.lastDirectError = null;
+    this.hlsRecovery = { network: 0, media: 0 };
     this.lyrics = { lines: [], metadata: {}, raw: '' };
     this.activeLyric = -1;
     this.loading = false;
@@ -144,6 +149,10 @@ export class Player extends EventTarget {
   }
 
   stop() {
+    this.loadSerial += 1;
+    this.sourceMode = 'idle';
+    this.fallbackInProgress = false;
+    this.lastDirectError = null;
     this.audio.pause();
     this.audio.removeAttribute('src');
     this.audio.load();
@@ -249,55 +258,124 @@ export class Player extends EventTarget {
   async #loadCurrent({ autoplay }) {
     const track = this.currentTrack;
     if (!track) return;
+
+    const serial = ++this.loadSerial;
     this.loading = true;
     this.error = null;
+    this.sourceMode = 'loading';
+    this.fallbackInProgress = false;
+    this.lastDirectError = null;
+    this.hlsRecovery = { network: 0, media: 0 };
     this.lyrics = { lines: [], metadata: {}, raw: '' };
     this.activeLyric = -1;
     this.#emit('track');
     this.#emit('state');
     this.#destroyHls();
     await this.#quitTranscode();
+    if (serial !== this.loadSerial || this.currentTrack?.guid !== track.guid) return;
+
+    this.audio.pause();
+    this.audio.removeAttribute('src');
+    this.audio.load();
 
     const format = String(track.audioSpec?.format || track.audioSpec?.codec || '').toLowerCase();
-    const shouldTranscode = ['dsf', 'dff', 'sacd'].some((item) => format.includes(item));
+    const shouldTranscode = ['dsf', 'dff', 'dsd', 'sacd', 'ape', 'wma', 'dts', 'aiff']
+      .some((item) => format.includes(item));
+
     try {
       if (shouldTranscode) {
-        await this.#loadTranscode(track);
+        await this.#loadTranscode(track, serial);
       } else {
-        this.audio.src = streamUrl(track.guid);
-        this.audio.load();
+        await this.#loadDirect(track, serial);
       }
+      if (serial !== this.loadSerial || this.currentTrack?.guid !== track.guid) return;
+
       this.#loadLyrics(track);
       this.#updateMediaMetadata(track);
       this.#prefetchNextCover();
       if (autoplay) await this.audio.play();
+      this.error = null;
     } catch (error) {
-      if (!shouldTranscode && !this.fallbackAttempted.has(track.guid)) {
-        this.fallbackAttempted.add(track.guid);
-        try {
-          await this.#loadTranscode(track);
-          if (autoplay) await this.audio.play();
-          return;
-        } catch (fallbackError) {
-          this.#setError(`播放失败：${fallbackError.message}`);
-        }
+      if (serial !== this.loadSerial || this.currentTrack?.guid !== track.guid) return;
+      if (!shouldTranscode && shouldFallbackToTranscode(error)) {
+        await this.#fallbackToTranscode(track, error, { autoplay, serial });
       } else {
-        this.#setError(`播放失败：${error.message}`);
+        await this.#reportPlaybackFailure(track, null, error);
       }
     } finally {
-      this.loading = false;
-      this.#emit('state');
+      if (serial === this.loadSerial) {
+        this.loading = false;
+        this.#emit('state');
+      }
     }
   }
 
-  async #loadTranscode(track) {
+  async #loadDirect(track, serial) {
+    const url = streamUrl(track.guid);
+    await probeMediaSource(url);
+    if (serial !== this.loadSerial || this.currentTrack?.guid !== track.guid) {
+      throw staleLoadError();
+    }
+    this.sourceMode = 'direct';
+    this.audio.src = url;
+    this.audio.load();
+  }
+
+  async #fallbackToTranscode(track, directError, { autoplay = true, serial = this.loadSerial } = {}) {
+    if (
+      this.fallbackInProgress ||
+      serial !== this.loadSerial ||
+      this.currentTrack?.guid !== track.guid
+    ) {
+      return false;
+    }
+
+    this.fallbackInProgress = true;
+    this.lastDirectError = directError;
+    this.loading = true;
+    this.#emit('state');
+    try {
+      await this.#loadTranscode(track, serial);
+      if (serial !== this.loadSerial || this.currentTrack?.guid !== track.guid) return false;
+      if (autoplay) await this.audio.play();
+      this.error = null;
+      this.#emit('state');
+      return true;
+    } catch (fallbackError) {
+      if (serial === this.loadSerial && this.currentTrack?.guid === track.guid) {
+        await this.#reportPlaybackFailure(track, directError, fallbackError);
+      }
+      return false;
+    } finally {
+      if (serial === this.loadSerial) {
+        this.fallbackInProgress = false;
+        this.loading = false;
+        this.#emit('state');
+      }
+    }
+  }
+
+  async #loadTranscode(track, serial = this.loadSerial) {
     this.#destroyHls();
+    this.audio.pause();
+    this.audio.removeAttribute('src');
+    this.audio.load();
+
     const result = await this.musicCall('startTranscode', {
       guid: track.guid,
       codec: 'mp3',
       channel: 2
     });
+    if (serial !== this.loadSerial || this.currentTrack?.guid !== track.guid) {
+      this.musicCall('quitTranscode', { guid: track.guid }).catch(() => {});
+      throw staleLoadError();
+    }
+
     this.transcodeGuid = track.guid;
+    this.sourceMode = 'transcode';
+    this.hlsRecovery = { network: 0, media: 0 };
+    await probeMediaSource(result.url, { playlist: true });
+
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
@@ -306,34 +384,103 @@ export class Player extends EventTarget {
         maxBufferLength: 60,
         maxMaxBufferLength: 120,
         manifestLoadingTimeOut: 20000,
-        fragLoadingTimeOut: 30000
+        fragLoadingTimeOut: 30000,
+        manifestLoadingMaxRetry: 2,
+        fragLoadingMaxRetry: 3
       });
       this.hls = hls;
       await new Promise((resolve, reject) => {
-        const cleanup = () => {
-          hls.off(Hls.Events.MANIFEST_PARSED, onReady);
-          hls.off(Hls.Events.ERROR, onError);
-        };
+        let ready = false;
         const onReady = () => {
-          cleanup();
+          ready = true;
+          hls.off(Hls.Events.MANIFEST_PARSED, onReady);
           resolve();
         };
         const onError = (_event, data) => {
           if (!data.fatal) return;
-          cleanup();
-          reject(new Error(data.details || 'HLS 转码流加载失败'));
+          if (!ready) {
+            hls.off(Hls.Events.MANIFEST_PARSED, onReady);
+            hls.off(Hls.Events.ERROR, onError);
+            reject(hlsPlaybackError(data));
+            return;
+          }
+          this.#recoverHlsError(data);
         };
         hls.on(Hls.Events.MANIFEST_PARSED, onReady);
         hls.on(Hls.Events.ERROR, onError);
-        hls.loadSource(result.url);
         hls.attachMedia(this.audio);
+        hls.loadSource(result.url);
       });
     } else if (this.audio.canPlayType('application/vnd.apple.mpegurl')) {
       this.audio.src = result.url;
       this.audio.load();
     } else {
-      throw new Error('当前播放器不支持服务器转码流');
+      throw playbackError('HLS_NOT_SUPPORTED', '当前 Windows 播放器不支持服务器转码流');
     }
+  }
+
+  #recoverHlsError(data) {
+    const hls = this.hls;
+    const track = this.currentTrack;
+    if (!hls || !track || this.sourceMode !== 'transcode') return;
+
+    if (data.type === Hls.ErrorTypes.NETWORK_ERROR && this.hlsRecovery.network < 1) {
+      this.hlsRecovery.network += 1;
+      setTimeout(() => {
+        if (this.hls === hls && this.sourceMode === 'transcode') hls.startLoad();
+      }, 450);
+      return;
+    }
+    if (data.type === Hls.ErrorTypes.MEDIA_ERROR && this.hlsRecovery.media < 1) {
+      this.hlsRecovery.media += 1;
+      hls.recoverMediaError();
+      return;
+    }
+
+    this.#reportPlaybackFailure(track, this.lastDirectError, hlsPlaybackError(data)).catch(() => {});
+  }
+
+  async #handleAudioElementError() {
+    const track = this.currentTrack;
+    if (!track || this.sourceMode === 'idle' || this.sourceMode === 'loading') return;
+    const error = mediaElementError(this.audio.error, this.sourceMode);
+    if (this.sourceMode === 'direct') {
+      await this.#fallbackToTranscode(track, error, {
+        autoplay: true,
+        serial: this.loadSerial
+      });
+      return;
+    }
+    if (this.sourceMode === 'transcode' && !this.fallbackInProgress) {
+      await this.#reportPlaybackFailure(track, this.lastDirectError, error);
+    }
+  }
+
+  async #reportPlaybackFailure(track, directError, finalError) {
+    if (this.currentTrack?.guid !== track.guid) return;
+    let proxyError = null;
+    try {
+      const diagnostics = await this.diagnostics?.();
+      const recent = Array.isArray(diagnostics?.recentErrors)
+        ? diagnostics.recentErrors
+        : [];
+      proxyError = [...recent].reverse().find((item) =>
+        String(item?.route || '').includes(track.guid)
+      ) || recent.at(-1) || null;
+    } catch {
+      proxyError = null;
+    }
+
+    const parts = [];
+    if (directError) parts.push(`直连：${formatPlaybackError(directError)}`);
+    if (finalError) parts.push(`转码：${formatPlaybackError(finalError)}`);
+    if (
+      proxyError?.message &&
+      !parts.some((item) => item.includes(proxyError.message))
+    ) {
+      parts.push(`代理：${proxyError.message}${proxyError.code ? `（${proxyError.code}）` : ''}`);
+    }
+    this.#setError(`播放失败${parts.length ? `；${parts.join('；')}` : ''}`);
   }
 
   async #loadLyrics(track) {
@@ -405,16 +552,11 @@ export class Player extends EventTarget {
     this.audio.addEventListener('durationchange', () => this.#emit('progress'));
     this.audio.addEventListener('volumechange', () => this.#emit('state'));
     this.audio.addEventListener('ended', () => this.next({ automatic: true }));
-    this.audio.addEventListener('error', async () => {
-      const track = this.currentTrack;
-      if (!track || this.hls || this.fallbackAttempted.has(track.guid)) return;
-      this.fallbackAttempted.add(track.guid);
-      try {
-        await this.#loadTranscode(track);
-        await this.audio.play();
-      } catch (error) {
-        this.#setError(`无法解码这首歌曲：${error.message}`);
-      }
+    this.audio.addEventListener('error', () => {
+      this.#handleAudioElementError().catch((error) => {
+        const track = this.currentTrack;
+        if (track) this.#reportPlaybackFailure(track, this.lastDirectError, error).catch(() => {});
+      });
     });
   }
 
@@ -541,6 +683,154 @@ export class Player extends EventTarget {
     this.repeatMode = ['off', 'all', 'one'].includes(saved.repeatMode) ? saved.repeatMode : 'off';
     this.shuffle = Boolean(saved.shuffle);
   }
+}
+
+async function probeMediaSource(url, { playlist = false } = {}) {
+  let response = await fetchWithTimeout(url, {
+    method: 'GET',
+    headers: {
+      Range: 'bytes=0-1',
+      Accept: playlist
+        ? 'application/vnd.apple.mpegurl, application/x-mpegURL, */*;q=0.8'
+        : 'audio/*, application/octet-stream, */*;q=0.8'
+    },
+    cache: 'no-store'
+  });
+
+  if (response.status === 416) {
+    await cancelResponseBody(response);
+    response = await fetchWithTimeout(url, {
+      method: 'HEAD',
+      headers: {
+        Accept: playlist
+          ? 'application/vnd.apple.mpegurl, application/x-mpegURL, */*;q=0.8'
+          : 'audio/*, application/octet-stream, */*;q=0.8'
+      },
+      cache: 'no-store'
+    });
+  }
+
+  const contentType = String(response.headers.get('content-type') || '')
+    .split(';', 1)[0]
+    .trim()
+    .toLowerCase();
+  const invalidContent =
+    contentType === 'application/json' ||
+    contentType === 'text/html' ||
+    contentType === 'application/xhtml+xml' ||
+    (!playlist && contentType.startsWith('text/'));
+
+  if (!response.ok || invalidContent) {
+    const message = await responseErrorMessage(response);
+    throw playbackError(
+      `MEDIA_HTTP_${response.status || 0}`,
+      message || `音频服务器返回 HTTP ${response.status || 0}`,
+      { status: response.status, contentType }
+    );
+  }
+
+  await cancelResponseBody(response);
+  return true;
+}
+
+async function fetchWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw playbackError('MEDIA_TIMEOUT', '读取音频流超时');
+    }
+    throw playbackError(
+      'MEDIA_NETWORK_ERROR',
+      `无法读取音频流：${error?.message || '网络错误'}`
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function responseErrorMessage(response) {
+  try {
+    const text = (await response.text()).trim();
+    if (!text) return '';
+    try {
+      const value = JSON.parse(text);
+      return String(value?.error?.message || value?.msg || value?.message || '').trim();
+    } catch {
+      if (/^\s*<!doctype|^\s*<html/i.test(text)) return '';
+      return text.replace(/\s+/g, ' ').slice(0, 500);
+    }
+  } catch {
+    return '';
+  }
+}
+
+async function cancelResponseBody(response) {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // The probe only needs response headers; cancellation is best-effort.
+  }
+}
+
+function shouldFallbackToTranscode(error) {
+  const code = String(error?.code || '');
+  if (error?.name === 'NotAllowedError' || code === 'STALE_MEDIA_LOAD') return false;
+  return ![
+    'MEDIA_HTTP_401',
+    'MEDIA_HTTP_403',
+    'MEDIA_HTTP_404',
+    'SESSION_EXPIRED',
+    'NOT_AUTHENTICATED'
+  ].includes(code);
+}
+
+function mediaElementError(error, sourceMode) {
+  const descriptions = {
+    1: '播放请求被中止',
+    2: '读取音频数据时发生网络错误',
+    3: 'Chromium 无法解码该音频内容',
+    4: '音频格式或资源地址不受支持'
+  };
+  const code = Number(error?.code || 0);
+  return playbackError(
+    `MEDIA_ELEMENT_${code || 'UNKNOWN'}`,
+    descriptions[code] || `${sourceMode === 'transcode' ? '转码' : '直连'}播放器发生未知错误`
+  );
+}
+
+function hlsPlaybackError(data) {
+  const status = Number(data?.response?.code || data?.networkDetails?.status || 0);
+  const detail = String(data?.details || data?.reason || 'HLS 转码流加载失败');
+  return playbackError(
+    status ? `HLS_HTTP_${status}` : 'HLS_FATAL_ERROR',
+    status ? `${detail}（HTTP ${status}）` : detail,
+    { status, type: data?.type || null }
+  );
+}
+
+function playbackError(code, message, details = null) {
+  const error = new Error(String(message || '播放失败'));
+  error.code = String(code || 'PLAYBACK_ERROR');
+  error.details = details;
+  return error;
+}
+
+function staleLoadError() {
+  const error = playbackError('STALE_MEDIA_LOAD', '歌曲已切换');
+  error.name = 'AbortError';
+  return error;
+}
+
+function formatPlaybackError(error) {
+  const message = String(error?.message || error || '未知错误');
+  const code = String(error?.code || '');
+  if (/notallowederror|user didn't interact|play\(\) failed/i.test(message)) {
+    return '系统阻止了自动播放，请再次点击播放按钮';
+  }
+  return code && !message.includes(code) ? `${message}（${code}）` : message;
 }
 
 function uniqueTracks(tracks) {

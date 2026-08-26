@@ -18,7 +18,10 @@ const environment = Object.freeze({
   isWayland: process.platform === 'linux' && (
     sessionType === 'wayland' || Boolean(process.env.WAYLAND_DISPLAY)
   ),
-  sessionType
+  sessionType,
+  mediaBaseUrl: /^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]{32,}$/.test(
+    String(process.env.XT_MUSIC_MEDIA_BASE_URL || '')
+  ) ? String(process.env.XT_MUSIC_MEDIA_BASE_URL) : null
 });
 
 contextBridge.exposeInMainWorld('xtMusic', Object.freeze({
@@ -48,7 +51,8 @@ contextBridge.exposeInMainWorld('xtMusic', Object.freeze({
     isMaximized: () => invoke('window:isMaximized')
   }),
   player: Object.freeze({
-    publishState: (state) => ipcRenderer.send('player:state', state)
+    publishState: (state) => ipcRenderer.send('player:state', state),
+    diagnostics: () => invoke('player:diagnostics')
   }),
   events: Object.freeze({
     onAuthProgress: (listener) => subscribe('auth:progress', listener),
