@@ -1,0 +1,102 @@
+name: Apply Large Library Hotfix 0.3.5
+
+on:
+  push:
+    branches:
+      - fix/large-library-0.3.5
+    paths:
+      - '.github/workflows/apply-large-library-hotfix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xtmusic-large-library-hotfix-0.3.5
+  cancel-in-progress: false
+
+jobs:
+  apply-test-package:
+    runs-on: windows-latest
+    timeout-minutes: 70
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply bounded-library source changes
+        run: node scripts/apply-large-library-hotfix.js
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run application and regression tests
+        run: npm run build
+
+      - name: Verify renderer assets
+        run: node scripts/verify-renderer-assets.js
+
+      - name: Capture Windows UI proof
+        run: npx electron scripts/windows-ui-snapshot.js
+
+      - name: Exercise loopback playback
+        run: npx electron scripts/windows-media-smoke.js
+
+      - name: Exercise delayed login and long queue
+        run: npx electron scripts/windows-post-login-smoke.js
+
+      - name: Exercise real large-library pagination
+        run: npx electron scripts/windows-large-library-smoke.js
+
+      - name: Build Windows installer and portable package
+        run: npm run dist:win
+
+      - name: Verify packages and generate checksums
+        shell: pwsh
+        run: |
+          $installer = Get-Item 'release/XT-Music-0.3.5-x64.exe'
+          $portable = Get-Item 'release/XT-Music-Portable-0.3.5-x64.exe'
+          if ($installer.Length -lt 50000000) { throw "Installer is unexpectedly small: $($installer.Length)" }
+          if ($portable.Length -lt 50000000) { throw "Portable package is unexpectedly small: $($portable.Length)" }
+          if (-not (Test-Path 'ui-proof/windows-large-library-smoke.json')) { throw 'Missing large-library proof' }
+          Get-FileHash $installer.FullName, $portable.FullName -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
+            Set-Content 'release/SHA256SUMS-Windows.txt'
+          Get-Content 'release/SHA256SUMS-Windows.txt'
+          Get-Content 'ui-proof/windows-large-library-smoke.json'
+
+      - id: commit
+        name: Commit validated large-library hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/apply-large-library-hotfix.yml scripts/apply-large-library-hotfix.js
+          git add -A
+          git status --short
+          git commit -m 'fix: bound large music libraries and dispose stale routes'
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          git push origin HEAD:fix/large-library-0.3.5
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Windows-Large-Library-0.3.5
+          path: |
+            release/XT-Music-0.3.5-x64.exe
+            release/XT-Music-Portable-0.3.5-x64.exe
+            release/SHA256SUMS-Windows.txt
+            ui-proof/renderer-assets.json
+            ui-proof/windows-ui-metrics.json
+            ui-proof/windows-ui-snapshot.png
+            ui-proof/windows-media-smoke.json
+            ui-proof/windows-post-login-smoke.json
+            ui-proof/windows-large-library-smoke.json
+          if-no-files-found: error
+          retention-days: 30
