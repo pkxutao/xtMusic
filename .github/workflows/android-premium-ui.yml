@@ -7,6 +7,7 @@ on:
     paths:
       - "android/**"
       - "scripts/apply_android_premium_ui_alpha03.py"
+      - "scripts/fix_android_premium_ui_alpha03.py"
       - "scripts/android-premium-ui-alpha03/**"
       - ".github/workflows/android-premium-ui.yml"
   workflow_dispatch:
@@ -27,7 +28,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Apply premium Android UI source
-        run: python scripts/apply_android_premium_ui_alpha03.py
+        run: |
+          python scripts/apply_android_premium_ui_alpha03.py
+          python scripts/fix_android_premium_ui_alpha03.py
 
       - uses: actions/setup-java@v4
         with:
