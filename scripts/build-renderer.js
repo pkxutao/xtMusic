@@ -33,6 +33,7 @@ for (const name of [
   'platform.js',
   'diagnostics.js',
   'lyrics-experience.css',
+  'lyrics-line-mode.css',
   'lyrics-experience.js'
 ]) {
   fs.copyFileSync(

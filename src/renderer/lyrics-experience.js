@@ -32,7 +32,9 @@
     if (!contentRoot) return;
 
     const observer = new MutationObserver(() => inspectContent(contentRoot));
-    observer.observe(contentRoot, { childList: true, subtree: true });
+    // Only watch direct route replacements. Observing the full lyrics subtree
+    // caused toolbar text updates to recursively retrigger enhancement forever.
+    observer.observe(contentRoot, { childList: true });
     inspectContent(contentRoot);
 
     document.addEventListener('keydown', handleGlobalKeydown, true);
@@ -54,10 +56,7 @@
 
   function inspectContent(contentRoot) {
     const page = contentRoot.querySelector(PAGE_SELECTOR);
-    if (page === activePage) {
-      if (page) enhancePage(page);
-      return;
-    }
+    if (page === activePage) return;
 
     if (activePage) teardownPage(activePage);
     activePage = page || null;
@@ -123,13 +122,21 @@
     }
 
     const lineObserver = new MutationObserver((records) => {
-      if (!records.some((record) => record.type === 'attributes' || record.type === 'childList')) return;
+      const needsRefresh = records.some((record) => {
+        if (record.type === 'childList') return true;
+        if (record.type !== 'attributes' || record.attributeName !== 'class') return false;
+        const before = String(record.oldValue || '').split(/\s+/).includes('is-active');
+        const after = record.target.classList.contains('is-active');
+        return before !== after;
+      });
+      if (!needsRefresh) return;
       refreshLineMetadata(page);
       updateLineStates(page);
     });
-    lineObserver.observe(page, {
+    lineObserver.observe(scroll || page, {
       attributes: true,
       attributeFilter: ['class'],
+      attributeOldValue: true,
       childList: true,
       subtree: true
     });
@@ -177,6 +184,9 @@
       clearTimeout(state.manualTimer);
       if (state.pointerRaf) cancelAnimationFrame(state.pointerRaf);
       state.lineObserver?.disconnect();
+      const animation = state.scroll ? scrollAnimations.get(state.scroll) : null;
+      if (animation) cancelAnimationFrame(animation.raf);
+      if (state.scroll) scrollAnimations.delete(state.scroll);
       for (const cleanup of state.cleanup) cleanup();
       pageStates.delete(page);
     }
@@ -271,7 +281,8 @@
     for (const line of lines) {
       const seconds = Number(line.dataset.lyricTime);
       if (Number.isFinite(seconds)) line.dataset.timeLabel = formatTime(seconds);
-      line.setAttribute('aria-label', `${line.textContent?.trim() || '空白歌词'}，${formatTime(seconds)}`);
+      const ariaLabel = `${line.textContent?.trim() || '空白歌词'}，${formatTime(seconds)}`;
+      if (line.getAttribute('aria-label') !== ariaLabel) line.setAttribute('aria-label', ariaLabel);
     }
   }
 
@@ -300,9 +311,10 @@
 
     const counter = page.querySelector('#lyrics-line-counter');
     if (counter) {
-      counter.textContent = activeIndex >= 0
+      const nextText = activeIndex >= 0
         ? `${String(activeIndex + 1).padStart(2, '0')} / ${String(lines.length).padStart(2, '0')}`
         : `-- / ${String(lines.length).padStart(2, '0')}`;
+      if (counter.textContent !== nextText) counter.textContent = nextText;
     }
   }
 
@@ -425,7 +437,10 @@
     page.style.setProperty('--lyrics-track-progress', `${clamp((current / duration) * 100, 0, 100).toFixed(2)}%`);
 
     const time = page.querySelector('#lyrics-toolbar-time');
-    if (time) time.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
+    if (time) {
+      const nextText = `${formatTime(current)} / ${formatTime(duration)}`;
+      if (time.textContent !== nextText) time.textContent = nextText;
+    }
   }
 
   function syncPlaybackClock(event) {

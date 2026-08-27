@@ -1,0 +1,55 @@
+/*
+ * Compact sentence-level lyric presentation.
+ * Loaded after lyrics-experience.css so the active lyric is highlighted as
+ * one complete line instead of filling from left to right with playback time.
+ */
+
+.lyrics-enhanced .lyric-line {
+  padding: clamp(8px, 1vh, 12px) 12px;
+  font-size: clamp(18px, 1.65vw, 28px);
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.025em;
+  transition:
+    color 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 180ms ease;
+}
+
+.lyrics-enhanced .lyric-line.is-active,
+.lyrics-enhanced .lyric-line.is-active:hover,
+.lyrics-enhanced .lyric-line.is-active:focus-visible {
+  color: var(--lyrics-foreground);
+  -webkit-text-fill-color: currentColor;
+  background-color: color-mix(in srgb, var(--lyrics-foreground) 5%, transparent);
+  background-image: none;
+  background-clip: border-box;
+  -webkit-background-clip: border-box;
+  font-weight: 720;
+  opacity: 1;
+  filter: none;
+  transform: translateX(8px) scale(1);
+  text-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+}
+
+@media (max-width: 1180px) {
+  .lyrics-enhanced .lyric-line {
+    font-size: clamp(17px, 1.9vw, 25px);
+  }
+}
+
+@media (max-width: 860px) {
+  .lyrics-enhanced .lyric-line {
+    font-size: clamp(18px, 4vw, 27px);
+  }
+}
+
+@media (max-height: 720px) {
+  .lyrics-enhanced .lyric-line {
+    padding-top: 7px;
+    padding-bottom: 7px;
+    font-size: clamp(17px, 1.55vw, 24px);
+  }
+}
