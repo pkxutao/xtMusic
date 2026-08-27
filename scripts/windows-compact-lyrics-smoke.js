@@ -62,7 +62,12 @@ app.whenReady().then(async () => {
     3000,
     'single active lyric line'
   );
-  await delay(700);
+
+  window.show();
+  window.focus();
+  await delay(350);
+  await execute("document.querySelector('.lyrics-page .lyric-line.is-active')?.scrollIntoView({ behavior: 'auto', block: 'center' })");
+  await delay(250);
 
   const metrics = await execute(`(() => {
     const active = document.querySelector('.lyrics-page .lyric-line.is-active');
@@ -73,6 +78,7 @@ app.whenReady().then(async () => {
       .map((sheet) => String(sheet.href || ''))
       .filter(Boolean);
     return {
+      pageClass: document.querySelector('#content-root > .page')?.className || '',
       activeCount: document.querySelectorAll('.lyrics-page .lyric-line.is-active').length,
       activeText: active?.textContent?.trim() || '',
       activeFontSizePx: activeStyle ? Number.parseFloat(activeStyle.fontSize) : null,
@@ -87,6 +93,9 @@ app.whenReady().then(async () => {
     };
   })()`);
 
+  if (!metrics.pageClass.includes('lyrics-page')) {
+    throw new Error(`Visible frame is not the lyrics page: ${JSON.stringify(metrics)}`);
+  }
   if (metrics.activeCount !== 1) {
     throw new Error(`Expected exactly one active lyric line: ${JSON.stringify(metrics)}`);
   }
