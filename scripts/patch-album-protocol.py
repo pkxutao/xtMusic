@@ -38,9 +38,14 @@ if MARKER not in value:
         '    this.allowSelfSigned = Boolean(session.allowSelfSigned);\n    this.artistAlbumsCache = new Map();\n',
         'artist cache init'
     )
-    anchor = """  getArtistTracks({ artistGUID, page = 1, size = 100, sort = null } = {}) {
+    anchor = """  getArtistTracks({ artistGUID, page = 1, size = 500, sort = null }) {
     requireId(artistGUID, 'artistGUID');
-    return this.#page('/track/artist-detail/list', { artistGUID, page, size, sort });
+    return this.#page('/track/artist-detail/list', {
+      artistGUID,
+      page,
+      size,
+      ...(sort ? { sort } : {})
+    });
   }
 """
     addition = anchor + f"""
