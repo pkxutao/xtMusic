@@ -3,6 +3,13 @@
 XT Music 是面向 Windows 与 Ubuntu 的飞牛音乐桌面客户端。当前主线 `v0.3.0` 使用 **Rust + egui/eframe + rodio/cpal**，不使用 Electron、Tauri 或 WebView 作为桌面运行时。
 
 旧 Electron 版本保留在 GitHub Release `v0.2.5`，用于回退和历史参考。
+<img width="1440" height="860" alt="image" src="https://github.com/user-attachments/assets/6d2fe121-5743-48fa-9803-72dceff5b946" />
+<img width="1440" height="860" alt="image" src="https://github.com/user-attachments/assets/15a11bd0-bc86-4e7c-83f2-df43732db4a0" />
+<img width="1440" height="860" alt="image" src="https://github.com/user-attachments/assets/1b29ad45-2546-42e4-8b2a-c97e86b8e6d1" />
+<img width="1440" height="860" alt="image" src="https://github.com/user-attachments/assets/96965637-51bb-49d0-99e2-4bef9cb90cc8" />
+
+
+
 
 ## 核心特性
 
