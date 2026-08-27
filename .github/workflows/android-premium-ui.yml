@@ -74,9 +74,11 @@ jobs:
           cp android/app/build/outputs/apk/debug/app-debug.apk \
             artifact/XT-Music-Android-0.1.0-alpha03-Premium-UI-universal-debug.apk
           APK=artifact/XT-Music-Android-0.1.0-alpha03-Premium-UI-universal-debug.apk
+          AAPT="${ANDROID_HOME}/build-tools/35.0.0/aapt"
+          test -x "$AAPT"
           test "$(stat -c%s "$APK")" -gt 500000
           unzip -t "$APK"
-          aapt dump badging "$APK" | tee artifact/APK-BADGING.txt
+          "$AAPT" dump badging "$APK" | tee artifact/APK-BADGING.txt
           (
             cd artifact
             sha256sum XT-Music-Android-0.1.0-alpha03-Premium-UI-universal-debug.apk > SHA256SUMS.txt
@@ -96,19 +98,6 @@ jobs:
           INFO
           cat artifact/SHA256SUMS.txt
 
-      - name: Commit validated premium UI source
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf android/.gradle android/build android/app/build
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add android
-          if ! git diff --cached --quiet; then
-            git commit -m 'feat(android): implement premium image-rich UI [skip ci]'
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-          fi
-
       - uses: actions/upload-artifact@v4
         with:
           name: XT-Music-Android-0.1.0-alpha03-Premium-UI
@@ -121,3 +110,16 @@ jobs:
             android/app/build/reports/tests/testDebugUnitTest/**
           if-no-files-found: error
           retention-days: 30
+
+      - name: Commit validated premium UI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf android/.gradle android/build android/app/build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat(android): implement premium image-rich UI [skip ci]'
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
