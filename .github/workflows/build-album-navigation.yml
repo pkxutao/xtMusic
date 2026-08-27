@@ -27,13 +27,15 @@ jobs:
         with:
           node-version: 22
 
-      - name: Apply album-first navigation changes
+      - name: Apply album navigation and readable song-list changes
         shell: pwsh
         run: |
           python scripts/patch-album-protocol.py
           python scripts/patch-album-views.py
           python scripts/patch-album-app.py
           python scripts/patch-album-table-navigation.py
+          python scripts/patch-bottom-player-album-click.py
+          python scripts/patch-track-list-typography.py
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -53,6 +55,9 @@ jobs:
       - name: Verify artist albums and universal album navigation
         run: npx electron scripts/windows-album-navigation-smoke.js
 
+      - name: Verify larger song-list typography
+        run: npx electron scripts/windows-track-list-typography-smoke.js
+
       - name: Build Windows installer and portable package
         run: npm run dist:win
 
@@ -64,29 +69,33 @@ jobs:
           if ($installerSource.Length -lt 50000000) { throw "Installer is unexpectedly small: $($installerSource.Length)" }
           if ($portableSource.Length -lt 50000000) { throw "Portable package is unexpectedly small: $($portableSource.Length)" }
 
-          $installer = 'release/XT-Music-0.3.7-Album-Navigation-x64.exe'
-          $portable = 'release/XT-Music-Portable-0.3.7-Album-Navigation-x64.exe'
+          $installer = 'release/XT-Music-0.3.7-Album-Navigation-Larger-Lists-x64.exe'
+          $portable = 'release/XT-Music-Portable-0.3.7-Album-Navigation-Larger-Lists-x64.exe'
           Copy-Item $installerSource.FullName $installer -Force
           Copy-Item $portableSource.FullName $portable -Force
 
           Get-FileHash $installer, $portable -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
-            Set-Content 'release/SHA256SUMS-Windows-Album-Navigation.txt'
+            Set-Content 'release/SHA256SUMS-Windows-Album-Navigation-Larger-Lists.txt'
 
           @(
-            'XT Music 0.3.7 Album Navigation verification',
+            'XT Music 0.3.7 Album Navigation + Larger Song Lists verification',
             'artist detail renders albums instead of a song table: PASS',
             'artist album card opens album detail songs: PASS',
             'track-table album label opens album detail: PASS',
             'bottom-player album label opens album detail: PASS',
             'now-playing/lyrics album label opens album detail: PASS',
+            'song-list title font is at least 14px: PASS',
+            'song-list metadata and header fonts are at least 12px: PASS',
+            'song-list virtual row height is 64px: PASS',
             'large-library responsiveness regression: PASS',
             'now-playing and lyrics regression: PASS',
             'Windows installer and portable build: PASS'
-          ) | Set-Content 'release/ALBUM-NAVIGATION-VERIFICATION.txt'
+          ) | Set-Content 'release/ALBUM-NAVIGATION-LARGER-LISTS-VERIFICATION.txt'
 
-          Get-Content 'release/SHA256SUMS-Windows-Album-Navigation.txt'
+          Get-Content 'release/SHA256SUMS-Windows-Album-Navigation-Larger-Lists.txt'
           Get-Content 'ui-proof/windows-album-navigation.json'
+          Get-Content 'ui-proof/windows-track-list-typography.json'
 
       - name: Commit validated source changes
         shell: pwsh
@@ -97,9 +106,9 @@ jobs:
             src/main/protocol/feiniu-client.js src/main/ipc.js `
             src/renderer/app.js src/renderer/views.js src/renderer/virtual-table.js `
             src/renderer/index.html src/renderer/styles.css `
-            tests/album-navigation.test.js
+            tests/album-navigation.test.js tests/track-list-typography.test.js
           if (-not (git diff --cached --quiet)) {
-            git commit -m 'feat: add album-first artist pages and universal album links [skip ci]'
+            git commit -m 'feat: add album-first navigation and larger song-list text [skip ci]'
             git push origin "HEAD:$env:GITHUB_REF_NAME"
           } else {
             Write-Host 'Validated source is already committed.'
@@ -107,15 +116,17 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: XT-Music-Windows-Album-Navigation-0.3.7
+          name: XT-Music-Windows-Album-Navigation-Larger-Lists-0.3.7
           path: |
-            release/XT-Music-0.3.7-Album-Navigation-x64.exe
-            release/XT-Music-Portable-0.3.7-Album-Navigation-x64.exe
-            release/SHA256SUMS-Windows-Album-Navigation.txt
-            release/ALBUM-NAVIGATION-VERIFICATION.txt
+            release/XT-Music-0.3.7-Album-Navigation-Larger-Lists-x64.exe
+            release/XT-Music-Portable-0.3.7-Album-Navigation-Larger-Lists-x64.exe
+            release/SHA256SUMS-Windows-Album-Navigation-Larger-Lists.txt
+            release/ALBUM-NAVIGATION-LARGER-LISTS-VERIFICATION.txt
             ui-proof/windows-album-navigation.json
+            ui-proof/windows-track-list-typography.json
             ui-proof/windows-artist-albums.png
             ui-proof/windows-now-playing-album.png
+            ui-proof/windows-track-list-larger-text.png
             ui-proof/windows-large-library-smoke.json
             ui-proof/windows-now-playing-smoke.json
           if-no-files-found: error
