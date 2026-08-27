@@ -1,0 +1,192 @@
+name: Publish XT Music v0.3.7
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/publish-v0.3.7.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-xtmusic-v0.3.7
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '33033644802'
+      SOURCE_ARTIFACT: XT-Music-Windows-Album-Navigation-Larger-Lists-0.3.7
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download the exact Windows artifact approved by the user
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path downloaded | Out-Null
+          gh run download $env:SOURCE_RUN_ID `
+            --repo $env:GITHUB_REPOSITORY `
+            --name $env:SOURCE_ARTIFACT `
+            --dir downloaded
+          Get-ChildItem downloaded -Recurse -File | Select-Object FullName, Length
+
+      - name: Prepare stable release asset names and verify binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-out | Out-Null
+
+          $installerSource = Get-ChildItem downloaded -Recurse -File -Filter 'XT-Music-0.3.7-Album-Navigation-Larger-Lists-x64.exe' | Select-Object -First 1
+          $portableSource = Get-ChildItem downloaded -Recurse -File -Filter 'XT-Music-Portable-0.3.7-Album-Navigation-Larger-Lists-x64.exe' | Select-Object -First 1
+          $verificationSource = Get-ChildItem downloaded -Recurse -File -Filter 'ALBUM-NAVIGATION-LARGER-LISTS-VERIFICATION.txt' | Select-Object -First 1
+          $screenSource = Get-ChildItem downloaded -Recurse -File -Filter 'windows-track-list-larger-text.png' | Select-Object -First 1
+          $albumProofSource = Get-ChildItem downloaded -Recurse -File -Filter 'windows-album-navigation.json' | Select-Object -First 1
+          $textProofSource = Get-ChildItem downloaded -Recurse -File -Filter 'windows-track-list-typography.json' | Select-Object -First 1
+
+          if (-not $installerSource -or -not $portableSource -or -not $verificationSource -or -not $screenSource) {
+            throw 'The validated artifact is incomplete.'
+          }
+          if ($installerSource.Length -lt 50000000 -or $portableSource.Length -lt 50000000) {
+            throw 'A Windows executable is unexpectedly small.'
+          }
+
+          $installer = Join-Path $PWD 'release-out/XT-Music-0.3.7-x64.exe'
+          $portable = Join-Path $PWD 'release-out/XT-Music-Portable-0.3.7-x64.exe'
+          Copy-Item $installerSource.FullName $installer -Force
+          Copy-Item $portableSource.FullName $portable -Force
+          Copy-Item $verificationSource.FullName 'release-out/VERIFICATION.txt' -Force
+          Copy-Item $screenSource.FullName 'release-out/windows-track-list-larger-text.png' -Force
+          if ($albumProofSource) { Copy-Item $albumProofSource.FullName 'release-out/windows-album-navigation.json' -Force }
+          if ($textProofSource) { Copy-Item $textProofSource.FullName 'release-out/windows-track-list-typography.json' -Force }
+
+          @(
+            'XT Music v0.3.7'
+            "Repository: $env:GITHUB_REPOSITORY"
+            "Release source commit: $env:GITHUB_SHA"
+            "Validated source workflow run: $env:SOURCE_RUN_ID"
+            "Validated source artifact: $env:SOURCE_ARTIFACT"
+            'Platform: Windows x64'
+            'Installer and Portable files are byte-for-byte copies of the successful validation artifact.'
+          ) | Set-Content 'release-out/BUILD-INFO.txt' -Encoding utf8
+
+          $bundleItems = @(
+            'release-out/XT-Music-0.3.7-x64.exe',
+            'release-out/XT-Music-Portable-0.3.7-x64.exe',
+            'release-out/VERIFICATION.txt',
+            'release-out/BUILD-INFO.txt',
+            'release-out/windows-track-list-larger-text.png'
+          )
+          if (Test-Path 'release-out/windows-album-navigation.json') { $bundleItems += 'release-out/windows-album-navigation.json' }
+          if (Test-Path 'release-out/windows-track-list-typography.json') { $bundleItems += 'release-out/windows-track-list-typography.json' }
+          Compress-Archive -Path $bundleItems -DestinationPath 'release-out/XT-Music-0.3.7-Windows-Bundle.zip' -CompressionLevel Optimal -Force
+
+          $hashTargets = @(
+            'release-out/XT-Music-0.3.7-x64.exe',
+            'release-out/XT-Music-Portable-0.3.7-x64.exe',
+            'release-out/XT-Music-0.3.7-Windows-Bundle.zip'
+          )
+          Get-FileHash $hashTargets -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
+            Set-Content 'release-out/SHA256SUMS.txt' -Encoding utf8
+
+          $installerHash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
+          $portableHash = (Get-FileHash $portable -Algorithm SHA256).Hash.ToLower()
+          if ($installerHash -ne '8e9a31e4a2cf303d91d75d1d84d530b7ec9472bbf4736c4abd0fc4f1d045703c') {
+            throw "Installer SHA-256 mismatch: $installerHash"
+          }
+          if ($portableHash -ne '55944d0f6e095b2671d9833d05b848345c4c459e1fe5352935bebb9ae413b9e8') {
+            throw "Portable SHA-256 mismatch: $portableHash"
+          }
+
+          Get-Content 'release-out/SHA256SUMS.txt'
+          Get-ChildItem release-out -File | Select-Object Name, Length
+
+      - name: Write release notes
+        shell: pwsh
+        run: |
+          @'
+          # XT Music v0.3.7
+
+          本版本是经过真实 Windows 环境确认的正式版本。
+
+          ## 主要更新
+
+          - 歌手详情改为先展示该歌手的专辑，点击专辑后查看歌曲。
+          - 首页、专辑库、歌曲表格、底部播放器和正在播放/歌词页中的专辑都可进入专辑详情。
+          - 放大所有共用歌曲列表的标题、歌手、专辑、日期、时长和表头文字。
+          - 歌曲行高与封面尺寸同步增大，虚拟列表滚动几何保持一致。
+          - 保留大型曲库分页与响应性优化，避免一次性渲染上千张专辑。
+          - 保留音频 Range/206、HLS、本机安全媒体代理和播放错误诊断。
+          - 保留正在播放页面、紧凑歌词和当前整句高亮。
+
+          ## Windows 下载
+
+          - `XT-Music-0.3.7-x64.exe`：安装版
+          - `XT-Music-Portable-0.3.7-x64.exe`：免安装版
+          - `XT-Music-0.3.7-Windows-Bundle.zip`：完整交付包
+          - `SHA256SUMS.txt`：完整性校验
+
+          ## 验证
+
+          - 62 项自动测试通过
+          - 大型音乐库响应测试通过
+          - 正在播放与歌词回归通过
+          - 全部专辑入口跳转通过
+          - 放大歌曲列表字体的 Windows Chromium 渲染测试通过
+          - Windows 安装版与 Portable 构建通过
+
+          当前发布资产来自 GitHub Actions Run `33033644802` 的同一批成功产物，没有重新生成不同的 EXE。
+          '@ | Set-Content 'release-notes.md' -Encoding utf8
+
+      - name: Create GitHub Release and upload assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (gh release view v0.3.7 --repo $env:GITHUB_REPOSITORY 2>$null) {
+            gh release edit v0.3.7 `
+              --repo $env:GITHUB_REPOSITORY `
+              --title 'XT Music v0.3.7' `
+              --notes-file release-notes.md `
+              --latest
+          } else {
+            gh release create v0.3.7 `
+              --repo $env:GITHUB_REPOSITORY `
+              --target $env:GITHUB_SHA `
+              --title 'XT Music v0.3.7' `
+              --notes-file release-notes.md `
+              --latest
+          }
+
+          $assets = Get-ChildItem release-out -File | ForEach-Object { $_.FullName }
+          gh release upload v0.3.7 @assets --repo $env:GITHUB_REPOSITORY --clobber
+
+      - name: Verify the published Release from GitHub
+        shell: pwsh
+        run: |
+          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.3.7" | ConvertFrom-Json
+          $required = @(
+            'XT-Music-0.3.7-x64.exe',
+            'XT-Music-Portable-0.3.7-x64.exe',
+            'XT-Music-0.3.7-Windows-Bundle.zip',
+            'SHA256SUMS.txt',
+            'BUILD-INFO.txt',
+            'VERIFICATION.txt',
+            'windows-track-list-larger-text.png'
+          )
+          $actual = @($release.assets | ForEach-Object { $_.name })
+          foreach ($name in $required) {
+            if ($actual -notcontains $name) { throw "Release asset is missing: $name" }
+          }
+          if ($release.draft -or $release.prerelease) { throw 'Release is not a final public release.' }
+          Write-Host "Published release: $($release.html_url)"
+          $release.assets | Select-Object name, size, browser_download_url
