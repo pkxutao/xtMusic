@@ -7,8 +7,17 @@ import tarfile
 
 root = Path(__file__).resolve().parents[1]
 payload_dir = root / "scripts" / "android-premium-ui-alpha03"
-encoded = "".join(path.read_text(encoding="ascii").strip() for path in sorted(payload_dir.glob("payload.*")))
-archive_bytes = base64.b64decode(encoded)
+payload_names = (
+    "payload.000",
+    "payload.001a",
+    "payload.001b",
+    "payload.002",
+    "payload.003",
+)
+encoded = "".join((payload_dir / name).read_text(encoding="ascii").strip() for name in payload_names)
+if len(encoded) != 47044:
+    raise RuntimeError(f"Unexpected premium UI payload length: {len(encoded)}")
+archive_bytes = base64.b64decode(encoded, validate=True)
 with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
     members = archive.getmembers()
     for member in members:
