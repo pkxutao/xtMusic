@@ -7,6 +7,7 @@ on:
     paths:
       - "scripts/android-alpha02-payload/**"
       - "scripts/extract_android_alpha02.py"
+      - "scripts/patch_android_alpha02.py"
       - ".github/workflows/android-native.yml"
   workflow_dispatch:
 
@@ -28,7 +29,9 @@ jobs:
           fetch-depth: 0
 
       - name: Restore the verified native Android source
-        run: python scripts/extract_android_alpha02.py
+        run: |
+          python scripts/extract_android_alpha02.py
+          python scripts/patch_android_alpha02.py
 
       - uses: actions/setup-java@v4
         with:
