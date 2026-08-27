@@ -1,0 +1,92 @@
+name: Reconstruct Tauri migration
+
+on:
+  push:
+    branches:
+      - feat/tauri-rust-0.3.0
+    paths:
+      - '.migration/**'
+      - '.github/workflows/reconstruct-tauri.yml'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - '.migration/**'
+      - '.github/workflows/reconstruct-tauri.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconstruct:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inspect and salvage migration archive
+        shell: bash
+        run: |
+          set -u
+          mkdir -p reconstructed/full reconstructed/partial reconstructed/diagnostics snapshot
+          mapfile -t PARTS < <(find .migration -maxdepth 1 -type f -name 'payload.*' | sort -V)
+          test "${#PARTS[@]}" -gt 0
+          printf 'Parts:\n' | tee reconstructed/diagnostics/parts.txt
+          for part in "${PARTS[@]}"; do
+            printf '  %s %s bytes\n' "$part" "$(wc -c < "$part")" | tee -a reconstructed/diagnostics/parts.txt
+          done
+
+          cat "${PARTS[@]}" | tr -d '\r\n\t ' > reconstructed/payload.b64
+          base64 --decode reconstructed/payload.b64 > reconstructed/payload.bin
+          file reconstructed/payload.bin | tee reconstructed/diagnostics/file.txt
+          sha256sum reconstructed/payload.bin | tee reconstructed/diagnostics/sha256.txt
+
+          if gzip -t reconstructed/payload.bin 2>reconstructed/diagnostics/gzip-full.err; then
+            tar -xzf reconstructed/payload.bin -C reconstructed/full
+            echo complete > reconstructed/diagnostics/status.txt
+          else
+            echo incomplete > reconstructed/diagnostics/status.txt
+            echo 'Full archive is incomplete; salvaging the contiguous prefix before payload.06.'
+            cat .migration/payload.00 .migration/payload.01 .migration/payload.03 \
+              | tr -d '\r\n\t ' > reconstructed/prefix.b64
+            base64 --decode reconstructed/prefix.b64 > reconstructed/prefix.gz
+            set +e
+            gzip -dc reconstructed/prefix.gz > reconstructed/partial.tar 2>reconstructed/diagnostics/gzip-prefix.err
+            gzip_status=$?
+            tar -tvf reconstructed/partial.tar > reconstructed/diagnostics/partial-tar-list.txt 2>reconstructed/diagnostics/tar-list.err
+            tar -xf reconstructed/partial.tar -C reconstructed/partial --ignore-zeros 2>reconstructed/diagnostics/tar-extract.err
+            set -e
+            printf 'gzip-prefix-exit=%s\n' "$gzip_status" >> reconstructed/diagnostics/status.txt
+          fi
+
+          echo 'Full extraction:'
+          find reconstructed/full -type f -printf '%P %s bytes\n' | sort | tee reconstructed/diagnostics/full-files.txt
+          echo 'Partial extraction:'
+          find reconstructed/partial -type f -printf '%P %s bytes\n' | sort | tee reconstructed/diagnostics/partial-files.txt
+
+          rsync -a \
+            --exclude '.git/' \
+            --exclude '.migration/' \
+            --exclude 'reconstructed/' \
+            --exclude 'snapshot/' \
+            ./ snapshot/
+
+      - name: Upload reconstruction diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: xtmusic-tauri-reconstruction-diagnostics
+          path: reconstructed
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload current source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: xtmusic-current-source-snapshot
+          path: snapshot
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

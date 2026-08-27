@@ -1,0 +1,90 @@
+name: Recover Tauri Migration
+
+on:
+  push:
+    branches:
+      - feat/tauri-rust-0.3.0
+    paths:
+      - '.migration/**'
+      - '.github/workflows/tauri-migration-recover.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: recover-tauri-migration
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reassemble staged archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t PARTS < <(find .migration -maxdepth 1 -type f -name 'payload.*' | sort -V)
+          printf 'Found %s payload parts:\n' "${#PARTS[@]}"
+          printf '  %s\n' "${PARTS[@]}"
+          test "${#PARTS[@]}" -gt 0
+          cat "${PARTS[@]}" > /tmp/xtmusic-tauri.b64
+          base64 --decode /tmp/xtmusic-tauri.b64 > /tmp/xtmusic-tauri.tar.gz
+          gzip -t /tmp/xtmusic-tauri.tar.gz
+          mkdir -p /tmp/recovered
+          tar -xzf /tmp/xtmusic-tauri.tar.gz -C /tmp/recovered
+          find /tmp/recovered -maxdepth 3 -type f -print | sort
+
+      - name: Locate recovered project
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO="$(find /tmp/recovered -type f -path '*/src-tauri/Cargo.toml' -print -quit)"
+          test -n "$CARGO"
+          ROOT="${CARGO%/src-tauri/Cargo.toml}"
+          test -f "$ROOT/package.json"
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Replace staged payload with real source
+        shell: bash
+        env:
+          ROOT: ${{ steps.locate.outputs.root }}
+        run: |
+          set -euo pipefail
+          rm -rf .migration
+          rsync -a --delete-excluded \
+            --exclude '.git/' \
+            --exclude 'node_modules/' \
+            --exclude 'dist/' \
+            --exclude 'target/' \
+            "$ROOT/" ./
+          git status --short
+
+      - name: Validate recovered source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f src-tauri/Cargo.toml
+          test -f src-tauri/tauri.conf.json
+          test -f src-tauri/src/lib.rs
+          grep -q '"version"[[:space:]]*:[[:space:]]*"0.3.0"' package.json
+          grep -q '^version = "0.3.0"' src-tauri/Cargo.toml
+
+      - name: Commit recovered source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git commit -m 'feat: restore Tauri 2 and Rust migration source'
+          git push origin HEAD:feat/tauri-rust-0.3.0
