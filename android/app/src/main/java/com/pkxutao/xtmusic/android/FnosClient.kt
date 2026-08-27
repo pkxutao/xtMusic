@@ -58,6 +58,14 @@ class FnosClient(private var session: MusicSession) {
     fun getHistory(page: Int = 1, size: Int = 100): Page<Track> =
         page("/play-history/list", page, size, ::parseTrack)
 
+    fun getHome(): HomeData {
+        val history = getHistory(1, 12).list
+        val favorites = getFavorites(1, 10).list
+        val albums = getAlbums(1, 14).list
+        val artists = getArtists(1, 10).list
+        return HomeData(history, favorites, albums, artists)
+    }
+
     fun getAlbumTracks(albumGuid: String, page: Int = 1, size: Int = 200): Page<Track> =
         page(
             "/track/album-detail/list",
@@ -165,6 +173,9 @@ class FnosClient(private var session: MusicSession) {
         apiUrl("/static/cover") + "?coverId=" + encode(coverId) +
             "&size=" + size.coerceIn(48, 1600)
 
+    fun fetchArtwork(coverId: String, size: Int = 600): ByteArray =
+        requestBytes(coverUrl(coverId, size), 8 * 1024 * 1024)
+
     fun resourceHeaders(): Map<String, String> = authHeaders()
 
     private fun <T> page(
@@ -198,6 +209,67 @@ class FnosClient(private var session: MusicSession) {
         assertSuccess(requestJson(path, "POST", body = body), fallback)
     }
 
+    private fun requestBytes(initialUrl: String, maxBytes: Int): ByteArray {
+        var current = URI(initialUrl)
+        var headers = authHeaders()
+        repeat(6) { redirectDepth ->
+            val connection = open(current.toURL())
+            connection.instanceFollowRedirects = false
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 12_000
+            connection.readTimeout = 35_000
+            connection.setRequestProperty("Accept", "image/avif,image/webp,image/*,*/*;q=0.8")
+            connection.setRequestProperty("User-Agent", "XT-Music-Android/0.1.0-alpha03")
+            for ((name, value) in headers) connection.setRequestProperty(name, value)
+
+            val status = connection.responseCode
+            val location = connection.getHeaderField("Location")
+            if (status in 300..399 && !location.isNullOrBlank()) {
+                if (redirectDepth >= 5) {
+                    connection.disconnect()
+                    throw FnosException("TOO_MANY_REDIRECTS", "封面重定向次数过多")
+                }
+                val next = current.resolve(location)
+                if (current.scheme.equals("https", true) &&
+                    next.scheme.equals("http", true) &&
+                    !session.allowHttp
+                ) {
+                    connection.disconnect()
+                    throw FnosException("INSECURE_REDIRECT", "封面请求尝试降级为 HTTP，已阻止")
+                }
+                if (!FnosProtocol.isTrustedRedirect(current, next)) {
+                    headers = headers.filterKeys {
+                        it.lowercase() !in setOf("cookie", "authorization", "x-access-code", "x-access-source")
+                    }
+                }
+                connection.inputStream?.close()
+                connection.disconnect()
+                current = next
+                return@repeat
+            }
+
+            if (status == HttpURLConnection.HTTP_UNAUTHORIZED) {
+                connection.disconnect()
+                throw FnosException("SESSION_EXPIRED", "登录状态已失效，请重新登录")
+            }
+            if (status !in 200..299) {
+                connection.errorStream?.close()
+                connection.disconnect()
+                throw FnosException("ARTWORK_HTTP_ERROR", "封面加载失败（HTTP $status）")
+            }
+            val contentType = connection.contentType.orEmpty().lowercase()
+            if (contentType.isNotBlank() && !contentType.startsWith("image/")) {
+                connection.inputStream?.close()
+                connection.disconnect()
+                throw FnosException("ARTWORK_INVALID_TYPE", "服务器返回的不是图片")
+            }
+            val bytes = BufferedInputStream(connection.inputStream).use { it.readBytesLimited(maxBytes) }
+            connection.disconnect()
+            return bytes
+        }
+        throw FnosException("TOO_MANY_REDIRECTS", "封面重定向次数过多")
+    }
+
     private fun requestJson(
         path: String,
         method: String = "GET",
@@ -221,7 +293,7 @@ class FnosClient(private var session: MusicSession) {
             connection.connectTimeout = 12_000
             connection.readTimeout = 25_000
             connection.setRequestProperty("Accept", "application/json, */*")
-            connection.setRequestProperty("User-Agent", "XT-Music-Android/0.1.0-alpha02")
+            connection.setRequestProperty("User-Agent", "XT-Music-Android/0.1.0-alpha03")
             for ((name, value) in headers) connection.setRequestProperty(name, value)
             if (currentBody != null && currentMethod != "GET") {
                 connection.doOutput = true
@@ -376,11 +448,20 @@ class FnosClient(private var session: MusicSession) {
 
     private fun parseAlbum(value: JSONObject): Album? {
         val guid = value.stringValue("guid", "albumGUID", "albumGuid") ?: return null
+        val releaseYear = value.optInt("year", 0).takeIf { it > 0 }
+            ?: value.stringValue("releaseDate", "releasedAt")
+                ?.take(4)
+                ?.toIntOrNull()
+        var duration = value.optLong("duration", value.optLong("durationSeconds", 0))
+        if (duration > 86_400L * 10) duration /= 1000
         return Album(
             guid = guid,
             name = value.stringValue("name", "title") ?: "未知专辑",
             coverId = value.stringValue("coverId"),
-            trackCount = value.optInt("trackCount", value.optInt("count", 0))
+            trackCount = value.optInt("trackCount", value.optInt("count", 0)),
+            artists = parseArtists(value),
+            releaseYear = releaseYear,
+            durationSeconds = duration
         )
     }
 

@@ -27,14 +27,24 @@ data class Track(
 
     val albumText: String
         get() = album?.name?.takeIf { it.isNotBlank() } ?: "未知专辑"
+
+    val artworkId: String?
+        get() = coverId ?: album?.coverId
 }
 
 data class Album(
     val guid: String,
     val name: String,
     val coverId: String? = null,
-    val trackCount: Int = 0
-)
+    val trackCount: Int = 0,
+    val artists: List<ArtistRef> = emptyList(),
+    val releaseYear: Int? = null,
+    val durationSeconds: Long = 0
+) {
+    val artistText: String
+        get() = artists.map { it.name }.filter { it.isNotBlank() }.joinToString("、")
+            .ifBlank { "未知歌手" }
+}
 
 data class Artist(
     val guid: String,
@@ -49,6 +59,13 @@ data class Page<T>(
     val total: Int,
     val page: Int,
     val size: Int
+)
+
+data class HomeData(
+    val history: List<Track>,
+    val favorites: List<Track>,
+    val albums: List<Album>,
+    val artists: List<Artist>
 )
 
 data class MusicSession(
