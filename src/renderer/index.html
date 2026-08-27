@@ -77,7 +77,11 @@
         </div>
         <div class="now-playing-copy">
           <button id="player-title" class="now-playing-title" type="button" title="打开正在播放和歌词">选择一首歌曲</button>
-          <span id="player-artist">XT Music</span>
+          <div class="now-playing-meta">
+            <span id="player-artist">XT Music</span>
+            <span class="now-playing-separator" aria-hidden="true">·</span>
+            <button id="player-album" class="now-playing-album" type="button" disabled title="">未知专辑</button>
+          </div>
         </div>
         <button id="player-favorite" class="icon-button subtle" aria-label="收藏"></button>
       </div>

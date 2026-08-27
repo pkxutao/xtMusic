@@ -1,7 +1,7 @@
 {
   "name": "xtmusic",
-  "version": "0.3.6",
-  "description": "Responsive large-library build with restored now-playing entry, visible playback feedback, and deadlock-free synchronized lyrics.",
+  "version": "0.3.7",
+  "description": "Responsive large-library build with album-first artist pages and universal album navigation.",
   "main": "src/main/index.js",
   "type": "commonjs",
   "author": "pkxutao",

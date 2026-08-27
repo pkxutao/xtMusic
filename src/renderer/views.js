@@ -267,6 +267,40 @@ export function gridPageView({
   `;
 }
 
+export function artistAlbumsView({ item, albums, pagination = null }) {
+  const title = item?.name || item?.title || '未知歌手';
+  const total = Number(pagination?.total || albums?.length || item?.albumCount || 0);
+  const coverId = item?.coverId || albums?.find((album) => album?.coverId)?.coverId;
+  const trackCount = Number(item?.trackCount || 0);
+  return `
+    <div class="page detail-page artist-albums-page">
+      <section class="detail-hero artist-albums-hero">
+        <div class="detail-backdrop" style="${coverId ? `background-image:url('${attr(coverUrl(coverId, 800))}')` : ''}"></div>
+        <div class="detail-hero-content">
+          ${imageHtml(item?.coverId, title, 'detail-cover round', 900)}
+          <div class="detail-copy">
+            <p class="eyebrow">歌手</p>
+            <h1>${escapeHtml(title)}</h1>
+            <p class="detail-meta">${total} 张专辑${trackCount ? ` · ${trackCount} 首歌曲` : ''}</p>
+            <div class="detail-actions">
+              <button class="secondary-button" data-action="refresh">${icon('refresh', 16)}刷新专辑</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="artist-albums-section">
+        <div class="section-title-row">
+          <div><h2>专辑</h2><span>${total} 张</span></div>
+        </div>
+        <div class="media-grid artist-album-grid">
+          ${(albums || []).map((album) => mediaCard(album, 'album')).join('') || emptyState('album', '这个歌手暂时没有可浏览的专辑')}
+        </div>
+        ${paginationView(pagination)}
+      </section>
+    </div>
+  `;
+}
+
 export function trackPageView({
   title,
   subtitle,
@@ -372,7 +406,16 @@ export function lyricsView(playerState) {
           <div class="lyrics-track-copy">
             <h1>${escapeHtml(track.title)}</h1>
             <p>${escapeHtml(artistsText(track))}</p>
-            <span>${escapeHtml(track.album?.name || '未知专辑')}</span>
+            ${track.album?.guid ? `
+              <button class="lyrics-album-link entity-link"
+                      type="button"
+                      data-open-kind="album"
+                      data-open-id="${attr(track.album.guid)}"
+                      data-open-name="${attr(track.album.name || '未知专辑')}"
+                      data-open-cover-id="${attr(track.album.coverId || track.coverId || '')}">
+                ${icon('album', 14)}<span>${escapeHtml(track.album.name || '未知专辑')}</span>
+              </button>
+            ` : `<span class="lyrics-album-fallback">${escapeHtml(track.album?.name || '未知专辑')}</span>`}
           </div>
         </div>
         <div id="lyrics-scroll" class="lyrics-scroll">
@@ -577,10 +620,20 @@ function mediaCard(item, kind) {
         ? `${item.trackCount || 0} 首歌曲`
         : `${item.trackCount || 0} 首歌曲`;
   return `
-    <article class="media-card ${kind}-card" data-open-kind="${kind}" data-open-id="${attr(item.guid)}">
+    <article class="media-card ${kind}-card"
+             data-open-kind="${kind}"
+             data-open-id="${attr(item.guid)}"
+             data-open-name="${attr(name)}"
+             data-open-cover-id="${attr(item.coverId || '')}">
       <div class="media-card-art">
         ${imageHtml(item.coverId, name, coverClass, 480)}
-        <button class="card-play" data-open-kind="${kind}" data-open-id="${attr(item.guid)}" data-autoplay="true" aria-label="打开并播放">${icon('play', 20)}</button>
+        <button class="card-play"
+                data-open-kind="${kind}"
+                data-open-id="${attr(item.guid)}"
+                data-open-name="${attr(name)}"
+                data-open-cover-id="${attr(item.coverId || '')}"
+                data-autoplay="true"
+                aria-label="打开并播放">${icon('play', 20)}</button>
       </div>
       <strong title="${attr(name)}">${escapeHtml(name)}</strong>
       <span>${escapeHtml(sub)}</span>

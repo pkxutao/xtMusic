@@ -15,6 +15,7 @@ const MUSIC_METHODS = new Set([
   'getHistory',
   'getAlbumTracks',
   'getArtistTracks',
+  'getArtistAlbums',
   'getGenreTracks',
   'getPlaylistTracks',
   'getTrackMetadata',
