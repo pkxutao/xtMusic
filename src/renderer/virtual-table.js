@@ -1,6 +1,7 @@
 import {
   albumText,
   artistsText,
+  attr,
   escapeHtml,
   formatDate,
   formatDuration,
@@ -14,7 +15,7 @@ export class VirtualTrackTable {
     this.host = host;
     this.tracks = Array.isArray(tracks) ? tracks : [];
     this.options = options;
-    this.rowHeight = options.rowHeight || 58;
+    this.rowHeight = options.rowHeight || 64; // XT_TRACK_LIST_TYPOGRAPHY_0_3_7
     this.overscan = options.overscan || 8;
     this.selected = new Set();
     this.renderedRange = '';
@@ -43,6 +44,7 @@ export class VirtualTrackTable {
     this.spacer.style.height = `${this.tracks.length * this.rowHeight}px`;
     this.viewport.addEventListener('scroll', () => this.render());
     this.viewport.addEventListener('dblclick', (event) => {
+      if (event.target.closest('[data-open-kind][data-open-id]')) return;
       const row = event.target.closest('[data-track-index]');
       if (!row) return;
       this.options.onActivate?.(Number(row.dataset.trackIndex), this.tracks[Number(row.dataset.trackIndex)]);
@@ -59,6 +61,19 @@ export class VirtualTrackTable {
   }
 
   #handleClick(event) {
+    const entity = event.target.closest('[data-open-kind][data-open-id]');
+    if (entity) {
+      event.preventDefault();
+      event.stopPropagation();
+      const kind = entity.dataset.openKind;
+      const guid = entity.dataset.openId;
+      this.options.onOpenEntity?.(kind, guid, {
+        guid,
+        name: entity.dataset.openName || '',
+        coverId: entity.dataset.openCoverId || null
+      });
+      return;
+    }
     const row = event.target.closest('[data-track-index]');
     if (!row) return;
     const index = Number(row.dataset.trackIndex);
@@ -108,6 +123,18 @@ export class VirtualTrackTable {
   #row(track, index, active, selected) {
     const coverId = track.coverId || track.album?.coverId;
     const artists = artistsText(track);
+    const album = track.album || {};
+    const albumName = albumText(track);
+    const albumGuid = String(album.guid || track.albumGUID || track.albumGuid || '').trim();
+    const albumMarkup = albumGuid
+      ? `<button class="entity-link track-album-link"
+                 type="button"
+                 data-open-kind="album"
+                 data-open-id="${attr(albumGuid)}"
+                 data-open-name="${attr(albumName)}"
+                 data-open-cover-id="${attr(album.coverId || coverId || '')}"
+                 title="打开专辑 ${attr(albumName)}">${escapeHtml(albumName)}</button>`
+      : `<span>${escapeHtml(albumName)}</span>`;
     return `
       <div class="track-table-row ${active ? 'is-active' : ''} ${selected ? 'is-selected' : ''}"
            data-track-index="${index}"
@@ -123,7 +150,7 @@ export class VirtualTrackTable {
             <div class="track-row-subtitle" title="${escapeHtml(artists)}">${escapeHtml(artists)}</div>
           </div>
         </div>
-        <div class="track-col-album" title="${escapeHtml(albumText(track))}">${escapeHtml(albumText(track))}</div>
+        <div class="track-col-album" title="${escapeHtml(albumName)}">${albumMarkup}</div>
         <div class="track-col-date">${formatDate(track.createdAt)}</div>
         <div class="track-col-actions">
           <button class="icon-button subtle ${track.isFavorite ? 'is-favorite' : ''}"

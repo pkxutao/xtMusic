@@ -4,6 +4,7 @@ import { Store } from './store.js';
 import { VirtualTrackTable } from './virtual-table.js';
 import {
   accountModal,
+  artistAlbumsView,
   detailView,
   errorView,
   gridPageView,
@@ -32,11 +33,20 @@ import {
   trackDuration
 } from './utils.js';
 
+const INITIAL_PLAYLIST_LIMIT = 120;
+const INITIAL_PLAYLIST_TIMEOUT_MS = 8000;
+const MAX_QUEUE_ROWS = 160;
+const GRID_PAGE_SIZE = 72;
+const TRACK_PAGE_SIZE = 400;
+const DETAIL_TRACK_PAGE_SIZE = 400;
+
 class XtMusicApp {
   constructor() {
     this.store = new Store();
     this.cache = new Map();
     this.requestSerial = 0;
+    this.playlistLoadSerial = 0;
+    this.sidebarSignature = '';
     this.currentTracks = [];
     this.currentItems = [];
     this.currentDetail = null;
@@ -62,6 +72,7 @@ class XtMusicApp {
       playerCover: document.querySelector('#player-cover'),
       playerTitle: document.querySelector('#player-title'),
       playerArtist: document.querySelector('#player-artist'),
+      playerAlbum: document.querySelector('#player-album'),
       playerFavorite: document.querySelector('#player-favorite'),
       playerToggle: document.querySelector('#player-toggle'),
       playerPrevious: document.querySelector('#player-previous'),
@@ -80,6 +91,7 @@ class XtMusicApp {
     this.player = new Player({
       musicCall: (method, args) => api.music(method, args),
       publishState: (state) => bridge.player.publishState(state),
+      diagnostics: () => bridge.player.diagnostics(),
       onVolumeChange: debounce((volume) => {
         api.setSetting('volume', volume).catch(() => {});
         this.store.update((state) => ({
@@ -133,6 +145,22 @@ class XtMusicApp {
   }
 
   #bindGlobalEvents() {
+    // XT_LYRICS_ALBUM_CAPTURE_0_3_7: lyrics enhancements can install their own delegated handlers.
+    // Capture this navigation at Window before any page-level handler can consume it.
+    window.addEventListener('click', (event) => {
+      const target = event.target.closest?.('.lyrics-album-link[data-open-id]');
+      if (!target) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const guid = String(target.dataset.openId || '').trim();
+      if (!guid) return;
+      const item = {
+        guid,
+        name: target.dataset.openName || target.textContent?.trim() || '未知专辑',
+        coverId: target.dataset.openCoverId || null
+      };
+      this.#navigate('album', { guid, item });
+    }, true);
     document.addEventListener('click', (event) => this.#handleClick(event));
     document.addEventListener('submit', (event) => this.#handleSubmit(event));
     document.addEventListener('change', (event) => this.#handleChange(event));
@@ -194,13 +222,34 @@ class XtMusicApp {
     });
     this.els.playerVolumeIcon.addEventListener('click', () => this.player.toggleMute());
     this.els.playerQueue.addEventListener('click', () => this.#toggleQueue());
-    this.els.playerLyrics.addEventListener('click', () => this.#navigate('lyrics'));
-    this.els.playerTitle.addEventListener('click', () => this.#navigate('lyrics'));
+    const openNowPlaying = () => this.#openNowPlaying();
+    this.els.playerCover.addEventListener('click', openNowPlaying);
+    this.els.playerCover.addEventListener('keydown', (event) => {
+      if (!['Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      openNowPlaying();
+    });
+    this.els.playerLyrics.addEventListener('click', openNowPlaying);
+    this.els.playerTitle.addEventListener('click', openNowPlaying);
+    // XT_BOTTOM_PLAYER_ALBUM_CLICK_0_3_7: keep this control independent from the now-playing title action.
+    this.els.playerAlbum.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const guid = String(this.els.playerAlbum.dataset.openId || '').trim();
+      if (!guid) return;
+      const item = {
+        guid,
+        name: this.els.playerAlbum.dataset.openName || this.els.playerAlbum.textContent || '未知专辑',
+        coverId: this.els.playerAlbum.dataset.openCoverId || null
+      };
+      this.#navigate('album', { guid, item });
+    });
     this.els.playerFavorite.addEventListener('click', () => this.#toggleFavorite(this.player.currentTrack));
 
-    for (const eventName of ['state', 'track', 'queue', 'progress']) {
+    for (const eventName of ['state', 'track', 'queue']) {
       this.player.addEventListener(eventName, () => this.#renderPlayer());
     }
+    this.player.addEventListener('progress', () => this.#renderPlayerProgress());
     this.player.addEventListener('track', () => {
       this.#renderQueue();
       if (this.currentTable) this.currentTable.setActiveGuid(this.player.currentTrack?.guid);
@@ -224,6 +273,17 @@ class XtMusicApp {
   }
 
   #showLogin(error = null, prefill = null) {
+    this.requestSerial += 1;
+    this.playlistLoadSerial += 1;
+    this.sidebarSignature = '';
+    this.currentTable?.destroy();
+    this.currentTable = null;
+    this.currentTracks = [];
+    this.currentItems = [];
+    this.currentDetail = null;
+    this.els.content.replaceChildren();
+    this.els.sidebar.replaceChildren();
+    this.els.queue.replaceChildren();
     const state = this.store.get();
     this.els.shell.classList.add('is-hidden');
     this.els.loginRoot.classList.remove('is-hidden');
@@ -249,31 +309,63 @@ class XtMusicApp {
   }
 
   async #enterSession(session) {
-    this.store.set({ session, error: null }, 'session');
+    const playlistSerial = ++this.playlistLoadSerial;
+    this.sidebarSignature = '';
+    this.store.set({ session, error: null, playlists: [], playlistTotal: 0 }, 'session');
     this.els.loginRoot.classList.add('is-hidden');
     this.els.shell.classList.remove('is-hidden');
-    this.#renderChrome();
     this.#renderPlayer();
     this.#renderQueue();
-    try {
-      const playlists = await this.#fetchAll('getPlaylists', {}, 200, 5000);
-      this.store.set({ playlists }, 'playlists');
-    } catch {
-      this.store.set({ playlists: [] }, 'playlists');
-    }
+
     const last = this.store.get().settings.lastRoute || 'home';
     const safeRoute = ['home', 'tracks', 'albums', 'artists', 'genres', 'favorites', 'history', 'settings'].includes(last)
       ? last
       : 'home';
     this.store.navigate(safeRoute, {}, { replace: false, silent: true });
     this.#renderChrome();
+
+    // The first usable page is the critical path. Secondary playlist data is
+    // loaded only after that page has rendered.
     await this.#loadRoute(this.store.get().route);
+    void this.#loadInitialPlaylists(session, playlistSerial);
+  }
+
+  async #loadInitialPlaylists(session, serial) {
+    try {
+      const result = await withTimeout(
+        api.music('getPlaylists', { page: 1, size: INITIAL_PLAYLIST_LIMIT }),
+        INITIAL_PLAYLIST_TIMEOUT_MS,
+        '歌单加载超时'
+      );
+      if (serial !== this.playlistLoadSerial) return;
+      if (sessionKey(this.store.get().session) !== sessionKey(session)) return;
+      const list = Array.isArray(result?.list) ? result.list.slice(0, INITIAL_PLAYLIST_LIMIT) : [];
+      const total = Math.max(Number(result?.total || 0), list.length);
+      this.store.set({ playlists: list, playlistTotal: total }, 'playlists');
+      this.#renderChrome();
+    } catch {
+      // Playlist navigation is optional; failure must not replace the usable page.
+    }
   }
 
   #renderChrome() {
     const state = this.store.get();
     if (!state.session) return;
-    this.els.sidebar.innerHTML = sidebarView(state);
+    const visiblePlaylists = (state.playlists || []).slice(0, INITIAL_PLAYLIST_LIMIT);
+    const playlistSignature = visiblePlaylists
+      .map((item) => `${item.guid || ''}:${item.name || ''}`)
+      .join('\u001f');
+    const signature = [
+      sessionKey(state.session),
+      state.route?.name || 'home',
+      state.route?.params?.guid || '',
+      state.playlistTotal || visiblePlaylists.length,
+      playlistSignature
+    ].join('\u001e');
+    if (signature !== this.sidebarSignature) {
+      this.els.sidebar.innerHTML = sidebarView(state);
+      this.sidebarSignature = signature;
+    }
     this.els.titleAccount.innerHTML = `<span class="account-avatar">${escapeHtml(initials(state.session.name || state.session.username))}</span>`;
     this.els.back.disabled = state.historyIndex <= 0;
     this.els.forward.disabled = state.historyIndex >= state.history.length - 1;
@@ -322,55 +414,101 @@ class XtMusicApp {
   }
 
   async #fetchRouteData(route) {
+    const page = normalizePage(route.params?.page);
     switch (route.name) {
       case 'home':
         return api.music('getHome');
       case 'tracks':
-        return { list: await this.#fetchAll('getTracks', {}, 500, 30000) };
+        return normalizePageResult(
+          await api.music('getTracks', { page, size: TRACK_PAGE_SIZE }),
+          page,
+          TRACK_PAGE_SIZE
+        );
       case 'albums':
-        return { list: await this.#fetchAll('getAlbums', {}, 300, 15000) };
+        return normalizePageResult(
+          await api.music('getAlbums', { page, size: GRID_PAGE_SIZE }),
+          page,
+          GRID_PAGE_SIZE
+        );
       case 'artists':
-        return { list: await this.#fetchAll('getArtists', {}, 300, 15000) };
+        return normalizePageResult(
+          await api.music('getArtists', { page, size: GRID_PAGE_SIZE }),
+          page,
+          GRID_PAGE_SIZE
+        );
       case 'genres':
-        return { list: await this.#fetchAll('getGenres', {}, 300, 5000) };
+        return normalizePageResult(
+          await api.music('getGenres', { page, size: GRID_PAGE_SIZE }),
+          page,
+          GRID_PAGE_SIZE
+        );
       case 'favorites':
-        return { list: await this.#fetchAll('getFavorites', {}, 500, 30000) };
+        return normalizePageResult(
+          await api.music('getFavorites', { page, size: TRACK_PAGE_SIZE }),
+          page,
+          TRACK_PAGE_SIZE
+        );
       case 'history':
-        return { list: await this.#fetchAll('getHistory', {}, 500, 30000) };
+        return normalizePageResult(
+          await api.music('getHistory', { page, size: TRACK_PAGE_SIZE }),
+          page,
+          TRACK_PAGE_SIZE
+        );
       case 'search':
         return api.music('search', { query: route.params.query, page: 1, size: 100 });
       case 'album':
-        return this.#detailData('album', route.params);
+        return this.#detailData('album', route.params, page);
       case 'artist':
-        return this.#detailData('artist', route.params);
+        return this.#artistAlbumsData(route.params, page);
       case 'genre':
-        return this.#detailData('genre', route.params);
+        return this.#detailData('genre', route.params, page);
       case 'playlist':
-        return this.#detailData('playlist', route.params);
+        return this.#detailData('playlist', route.params, page);
       default:
         return api.music('getHome');
     }
   }
 
-  async #detailData(kind, params) {
+  async #detailData(kind, params, page = 1) {
     const item = params.item || this.#findKnownItem(kind, params.guid) || {
       guid: params.guid,
       name: params.name || detailFallback(kind)
     };
     const method = {
       album: 'getAlbumTracks',
-      artist: 'getArtistTracks',
       genre: 'getGenreTracks',
       playlist: 'getPlaylistTracks'
     }[kind];
     const key = {
       album: 'albumGUID',
-      artist: 'artistGUID',
       genre: 'genreGUID',
       playlist: 'playlistGUID'
     }[kind];
-    const tracks = await this.#fetchAll(method, { [key]: params.guid }, 500, 30000);
-    return { item, tracks };
+    const result = await api.music(method, {
+      [key]: params.guid,
+      page,
+      size: DETAIL_TRACK_PAGE_SIZE
+    });
+    const paged = normalizePageResult(result, page, DETAIL_TRACK_PAGE_SIZE);
+    return {
+      item,
+      tracks: paged.list,
+      pagination: paged.pagination
+    };
+  }
+
+  async #artistAlbumsData(params, page = 1) {
+    const item = params.item || this.#findKnownItem('artist', params.guid) || {
+      guid: params.guid,
+      name: params.name || detailFallback('artist')
+    };
+    const result = await api.music('getArtistAlbums', {
+      artistGUID: params.guid,
+      page,
+      size: GRID_PAGE_SIZE
+    });
+    const paged = normalizePageResult(result, page, GRID_PAGE_SIZE);
+    return { item, albums: paged.list, pagination: paged.pagination };
   }
 
   async #fetchAll(method, args = {}, pageSize = 500, hardLimit = 30000) {
@@ -398,32 +536,52 @@ class XtMusicApp {
         this.els.content.innerHTML = homeView(data, this.store.get().session);
         break;
       case 'tracks':
-        this.#renderTrackRoute('所有歌曲', `${data.list.length} 首来自飞牛音乐库的歌曲`, data.list);
+        this.#renderTrackRoute(
+          '所有歌曲',
+          pageSummary(data.pagination, '首歌曲'),
+          data.list,
+          data.pagination,
+          '播放本页'
+        );
         break;
       case 'favorites':
-        this.#renderTrackRoute('我喜欢的音乐', `${data.list.length} 首已收藏歌曲`, data.list);
+        this.#renderTrackRoute(
+          '我喜欢的音乐',
+          pageSummary(data.pagination, '首收藏'),
+          data.list,
+          data.pagination,
+          '播放本页'
+        );
         break;
       case 'history':
-        this.#renderTrackRoute('最近播放', `${data.list.length} 条播放记录`, data.list);
+        this.#renderTrackRoute(
+          '最近播放',
+          pageSummary(data.pagination, '条记录'),
+          data.list,
+          data.pagination,
+          '播放本页'
+        );
         break;
       case 'albums':
         this.currentItems = data.list;
         this.els.content.innerHTML = gridPageView({
           title: '专辑',
-          subtitle: `${data.list.length} 张专辑`,
+          subtitle: pageSummary(data.pagination, '张专辑'),
           items: data.list,
           kind: 'album',
-          total: data.list.length
+          total: data.pagination.total,
+          pagination: data.pagination
         });
         break;
       case 'artists':
         this.currentItems = data.list;
         this.els.content.innerHTML = gridPageView({
           title: '歌手',
-          subtitle: `${data.list.length} 位歌手`,
+          subtitle: pageSummary(data.pagination, '位歌手'),
           items: data.list,
           kind: 'artist',
-          total: data.list.length,
+          total: data.pagination.total,
+          pagination: data.pagination,
           iconName: 'artist'
         });
         break;
@@ -431,10 +589,11 @@ class XtMusicApp {
         this.currentItems = data.list;
         this.els.content.innerHTML = gridPageView({
           title: '风格',
-          subtitle: `${data.list.length} 个音乐风格`,
+          subtitle: pageSummary(data.pagination, '个音乐风格'),
           items: data.list,
           kind: 'genre',
-          total: data.list.length,
+          total: data.pagination.total,
+          pagination: data.pagination,
           iconName: 'genre'
         });
         break;
@@ -444,8 +603,16 @@ class XtMusicApp {
         this.els.content.innerHTML = searchView(route.params.query, data);
         this.#mountTrackTable(this.currentTracks);
         break;
-      case 'album':
       case 'artist':
+        this.currentDetail = { kind: 'artist', item: data.item };
+        this.currentItems = data.albums;
+        this.els.content.innerHTML = artistAlbumsView({
+          item: data.item,
+          albums: data.albums,
+          pagination: data.pagination
+        });
+        break;
+      case 'album':
       case 'genre':
       case 'playlist':
         this.currentDetail = { kind: route.name, item: data.item };
@@ -453,7 +620,8 @@ class XtMusicApp {
         this.els.content.innerHTML = detailView({
           kind: route.name,
           item: data.item,
-          tracks: data.tracks
+          tracks: data.tracks,
+          pagination: data.pagination
         });
         this.#mountTrackTable(data.tracks);
         break;
@@ -463,9 +631,15 @@ class XtMusicApp {
     this.els.content.scrollTop = 0;
   }
 
-  #renderTrackRoute(title, subtitle, tracks) {
+  #renderTrackRoute(title, subtitle, tracks, pagination = null, actionLabel = null) {
     this.currentTracks = tracks;
-    this.els.content.innerHTML = trackPageView({ title, subtitle, tracks });
+    this.els.content.innerHTML = trackPageView({
+      title,
+      subtitle,
+      tracks,
+      pagination,
+      actionLabel
+    });
     this.#mountTrackTable(tracks);
   }
 
@@ -476,8 +650,30 @@ class XtMusicApp {
       activeGuid: this.player.currentTrack?.guid,
       onActivate: (index) => this.player.setQueue(tracks, index),
       onAction: (action, index, track, event) => this.#handleTrackAction(action, track, tracks, index, event),
+      onOpenEntity: (kind, guid, item) => this.#navigate(kind, { guid, item }),
       onContext: (event, index, track) => this.#showTrackContext(event, track, tracks, index)
     });
+  }
+
+  async #changeLibraryPage(rawPage) {
+    const current = this.store.get().route;
+    const page = normalizePage(rawPage);
+    if (page === normalizePage(current.params?.page)) return;
+    this.store.navigate(current.name, { ...current.params, page }, { replace: true });
+    this.#renderChrome();
+    await this.#loadRoute(this.store.get().route);
+  }
+
+  #openNowPlaying() {
+    if (!this.player.currentTrack) {
+      this.toast('请先播放一首歌曲', 'warning');
+      return;
+    }
+    if (this.store.get().route.name === 'lyrics') {
+      this.#syncLyrics(true);
+      return;
+    }
+    this.#navigate('lyrics');
   }
 
   #navigate(name, params = {}) {
@@ -514,8 +710,14 @@ class XtMusicApp {
 
     if (target.dataset.openKind && target.dataset.openId) {
       const kind = target.dataset.openKind;
-      const item = this.#findKnownItem(kind, target.dataset.openId);
-      this.#navigate(kind, { guid: target.dataset.openId, item });
+      const guid = target.dataset.openId;
+      const known = this.#findKnownItem(kind, guid);
+      const item = known || {
+        guid,
+        name: target.dataset.openName || detailFallback(kind),
+        coverId: target.dataset.openCoverId || null
+      };
+      this.#navigate(kind, { guid, item });
       return;
     }
 
@@ -565,6 +767,9 @@ class XtMusicApp {
         this.cache.delete(routeKey(this.store.get().route));
         await this.#loadRoute(this.store.get().route, { force: true });
         break;
+      case 'library-page':
+        await this.#changeLibraryPage(target.dataset.page);
+        break;
       case 'accounts':
         this.#showAccounts();
         break;
@@ -595,7 +800,7 @@ class XtMusicApp {
         this.toast('缓存已清理', 'success');
         break;
       case 'open-lyrics':
-        this.#navigate('lyrics');
+        this.#openNowPlaying();
         break;
       case 'remove-queue':
         this.player.removeFromQueue(Number(target.dataset.index));
@@ -821,12 +1026,38 @@ class XtMusicApp {
     const state = this.player.state;
     const track = state.track;
     const coverId = track?.coverId || track?.album?.coverId;
-    this.els.playerCover.innerHTML = coverId
+    const coverMarkup = coverId
       ? `<img src="${attr(coverUrl(coverId, 256))}" alt="">`
       : icon('music', 23);
+    this.els.playerCover.innerHTML = `${coverMarkup}<span class="now-playing-equalizer" aria-hidden="true"><i></i><i></i><i></i></span>`;
     this.els.playerCover.classList.toggle('cover-placeholder', !coverId);
+    this.els.playerCover.classList.toggle('is-clickable', Boolean(track));
+    this.els.playerCover.classList.toggle('is-playing', Boolean(track && state.playing));
+    this.els.playerCover.tabIndex = track ? 0 : -1;
+    this.els.playerCover.setAttribute('aria-disabled', String(!track));
+    this.els.playerCover.title = track ? '打开正在播放和歌词' : '播放歌曲后可打开歌词';
     this.els.playerTitle.textContent = track?.title || '选择一首歌曲';
+    this.els.playerTitle.disabled = !track;
+    this.els.playerTitle.title = track ? '打开正在播放和歌词' : '';
     this.els.playerArtist.textContent = track ? artistsText(track) : 'XT Music';
+    const playerAlbum = track?.album || null;
+    const playerAlbumGuid = String(playerAlbum?.guid || track?.albumGUID || track?.albumGuid || '').trim();
+    const playerAlbumName = track ? (playerAlbum?.name || '未知专辑') : '未知专辑';
+    this.els.playerAlbum.textContent = playerAlbumName;
+    this.els.playerAlbum.disabled = !playerAlbumGuid;
+    this.els.playerAlbum.classList.toggle('is-clickable', Boolean(playerAlbumGuid));
+    this.els.playerAlbum.title = playerAlbumGuid ? `打开专辑 ${playerAlbumName}` : '';
+    if (playerAlbumGuid) {
+      this.els.playerAlbum.dataset.openKind = 'album';
+      this.els.playerAlbum.dataset.openId = playerAlbumGuid;
+      this.els.playerAlbum.dataset.openName = playerAlbumName;
+      this.els.playerAlbum.dataset.openCoverId = playerAlbum?.coverId || coverId || '';
+    } else {
+      delete this.els.playerAlbum.dataset.openKind;
+      delete this.els.playerAlbum.dataset.openId;
+      delete this.els.playerAlbum.dataset.openName;
+      delete this.els.playerAlbum.dataset.openCoverId;
+    }
     this.els.playerFavorite.innerHTML = icon(track?.isFavorite ? 'heartFill' : 'heart', 17);
     this.els.playerFavorite.classList.toggle('is-favorite', Boolean(track?.isFavorite));
     this.els.playerFavorite.disabled = !track;
@@ -839,15 +1070,23 @@ class XtMusicApp {
     this.els.playerShuffle.classList.toggle('is-active', state.shuffle);
     this.els.playerRepeat.innerHTML = icon(state.repeatMode === 'one' ? 'repeatOne' : 'repeat', 17);
     this.els.playerRepeat.classList.toggle('is-active', state.repeatMode !== 'off');
-    this.els.playerLyrics.innerHTML = icon('lyrics', 18);
+    this.els.playerLyrics.innerHTML = `${icon('lyrics', 18)}<span>歌词</span>`;
     this.els.playerLyrics.classList.toggle('is-active', this.store.get().route.name === 'lyrics');
+    this.els.playerLyrics.disabled = !track;
+    this.els.playerLyrics.title = track ? '打开正在播放和歌词' : '请先播放一首歌曲';
+    document.querySelector('#player-bar')?.classList.toggle('is-playing', Boolean(track && state.playing));
     this.els.playerVolumeIcon.innerHTML = icon(state.muted || state.volume === 0 ? 'mute' : 'volume', 18);
     this.els.playerQueue.innerHTML = icon('queue', 19);
     this.els.playerQueue.classList.toggle('is-active', this.store.get().queueOpen);
     this.els.playerVolume.value = Math.round((state.muted ? 0 : state.volume) * 100);
     this.#setRangeProgress(this.els.playerVolume, Number(this.els.playerVolume.value));
 
-    const duration = Number(state.duration || trackDuration(track) || 0);
+    this.#renderPlayerProgress();
+  }
+
+  #renderPlayerProgress() {
+    const state = this.player.state;
+    const duration = Number(state.duration || trackDuration(state.track) || 0);
     const current = Math.min(Number(state.currentTime || 0), duration || Infinity);
     this.els.playerCurrent.textContent = formatDuration(current);
     this.els.playerDuration.textContent = formatDuration(duration);
@@ -865,7 +1104,12 @@ class XtMusicApp {
   }
 
   #renderQueue() {
+    if (!this.store.get().queueOpen) {
+      if (this.els.queue.childElementCount) this.els.queue.replaceChildren();
+      return;
+    }
     const state = this.player.state;
+    const windowed = queueRenderWindow(state.queue, state.index, MAX_QUEUE_ROWS);
     this.els.queue.innerHTML = `
       <div class="queue-inner">
         <div class="queue-header">
@@ -873,7 +1117,7 @@ class XtMusicApp {
           ${state.queue.length ? `<button class="text-button" data-action="clear-queue">清空</button>` : ''}
         </div>
         <div class="queue-list">
-          ${state.queue.map((track, index) => {
+          ${windowed.items.map(({ track, index }) => {
             const coverId = track.coverId || track.album?.coverId;
             return `
               <div class="queue-row ${index === state.index ? 'is-active' : ''}" data-queue-index="${index}">
@@ -886,6 +1130,7 @@ class XtMusicApp {
               </div>
             `;
           }).join('') || '<div class="empty-state"><strong>队列是空的</strong><span>双击歌曲开始播放</span></div>'}
+          ${windowed.omitted ? `<div class="queue-window-note">队列较长，仅显示第 ${windowed.start + 1}–${windowed.end} 首；当前播放项始终保留在窗口内。</div>` : ''}
         </div>
       </div>
     `;
@@ -1046,6 +1291,7 @@ class XtMusicApp {
     for (const value of this.cache.values()) {
       const lists = [
         value?.list,
+        value?.albums,
         value?.albums?.list,
         value?.artists?.list,
         value?.playlists?.list
@@ -1121,6 +1367,71 @@ class XtMusicApp {
   }
 }
 
+function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function sessionKey(session) {
+  if (!session) return '';
+  return String(session.id || `${session.username || ''}@${session.serverUrl || session.fnId || ''}`);
+}
+
+function queueRenderWindow(queue, currentIndex, limit) {
+  const list = Array.isArray(queue) ? queue : [];
+  const size = Math.max(1, Number(limit || MAX_QUEUE_ROWS));
+  if (list.length <= size) {
+    return {
+      start: 0,
+      end: list.length,
+      omitted: false,
+      items: list.map((track, index) => ({ track, index }))
+    };
+  }
+  const safeIndex = Math.max(0, Math.min(list.length - 1, Number(currentIndex || 0)));
+  let start = Math.max(0, safeIndex - Math.floor(size / 2));
+  start = Math.min(start, list.length - size);
+  const end = Math.min(list.length, start + size);
+  return {
+    start,
+    end,
+    omitted: true,
+    items: list.slice(start, end).map((track, offset) => ({ track, index: start + offset }))
+  };
+}
+
+function normalizePage(value) {
+  const page = Number.parseInt(String(value || 1), 10);
+  return Number.isFinite(page) && page > 0 ? page : 1;
+}
+
+function normalizePageResult(result, requestedPage, pageSize) {
+  const list = Array.isArray(result?.list) ? result.list : [];
+  const total = Math.max(0, Number(result?.total || list.length));
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(normalizePage(requestedPage), pages);
+  return {
+    list,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      pages,
+      start: total ? (page - 1) * pageSize + 1 : 0,
+      end: total ? Math.min(total, (page - 1) * pageSize + list.length) : 0
+    }
+  };
+}
+
+function pageSummary(pagination, unit) {
+  const page = pagination || {};
+  if (!page.total) return `0 ${unit}`;
+  return `第 ${page.start}–${page.end} ${unit}，共 ${page.total} ${unit}`;
+}
+
 function routeKey(route) {
   return `${route.name}:${JSON.stringify(stripObjects(route.params || {}))}`;
 }
@@ -1159,7 +1470,7 @@ function routeLoadingLabel(name) {
     search: '正在搜索音乐库…',
     playlist: '正在打开歌单…',
     album: '正在打开专辑…',
-    artist: '正在打开歌手…',
+    artist: '正在加载歌手专辑…',
     genre: '正在打开风格…'
   })[name] || '正在加载音乐库…';
 }

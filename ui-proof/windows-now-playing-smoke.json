@@ -1,0 +1,51 @@
+{
+  "verifiedAt": "2026-08-26T08:55:48.777Z",
+  "entry": {
+    "coverRole": "button",
+    "coverTabIndex": 0,
+    "coverClickable": true,
+    "coverPlaying": true,
+    "lyricsLabel": "歌词",
+    "titleAction": null
+  },
+  "coverResult": {
+    "pageClass": "page lyrics-page lyrics-enhanced is-ready",
+    "lines": 3,
+    "enhanced": "true",
+    "equalizerBars": 3,
+    "lagSamplesMs": [
+      0,
+      0.10000000000582077,
+      0.10000000000582077
+    ],
+    "firstPaintPeakMs": 0.10000000000582077,
+    "settledLagMs": 0.10000000000582077
+  },
+  "titleResult": {
+    "pageClass": "page lyrics-page lyrics-enhanced is-ready",
+    "lines": 3,
+    "enhanced": "true",
+    "equalizerBars": 3,
+    "lagSamplesMs": [
+      0.20000000001164153,
+      0,
+      0.10000000000582077
+    ],
+    "firstPaintPeakMs": 0.20000000001164153,
+    "settledLagMs": 0.10000000000582077
+  },
+  "buttonResult": {
+    "pageClass": "page lyrics-page lyrics-enhanced is-ready",
+    "lines": 3,
+    "enhanced": "true",
+    "equalizerBars": 3,
+    "lagSamplesMs": [
+      0,
+      0.09999999997671694,
+      0
+    ],
+    "firstPaintPeakMs": 0.09999999997671694,
+    "settledLagMs": 0
+  },
+  "becameUnresponsive": false
+}

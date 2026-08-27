@@ -9,6 +9,7 @@ import {
 } from './utils.js';
 
 const QUEUE_STORAGE_KEY = 'xtmusic.player.queue.v1';
+const MAX_PERSISTED_QUEUE = 500;
 
 export class Player extends EventTarget {
   constructor({ musicCall, publishState, onVolumeChange, diagnostics }) {
@@ -662,9 +663,10 @@ export class Player extends EventTarget {
   }
 
   #persist() {
+    const snapshot = persistentQueueSnapshot(this.queue, this.index);
     const payload = {
-      queue: this.queue.slice(0, 2000),
-      index: this.index,
+      queue: snapshot.queue,
+      index: snapshot.index,
       repeatMode: this.repeatMode,
       shuffle: this.shuffle
     };
@@ -678,7 +680,7 @@ export class Player extends EventTarget {
   #restore() {
     const saved = safeJsonParse(localStorage.getItem(QUEUE_STORAGE_KEY), null);
     if (!saved || !Array.isArray(saved.queue)) return;
-    this.queue = uniqueTracks(saved.queue).slice(0, 2000);
+    this.queue = uniqueTracks(saved.queue).slice(0, MAX_PERSISTED_QUEUE);
     this.index = this.queue.length ? clamp(Number(saved.index || 0), 0, this.queue.length - 1) : -1;
     this.repeatMode = ['off', 'all', 'one'].includes(saved.repeatMode) ? saved.repeatMode : 'off';
     this.shuffle = Boolean(saved.shuffle);
@@ -831,6 +833,20 @@ function formatPlaybackError(error) {
     return '系统阻止了自动播放，请再次点击播放按钮';
   }
   return code && !message.includes(code) ? `${message}（${code}）` : message;
+}
+
+function persistentQueueSnapshot(queue, index) {
+  const list = Array.isArray(queue) ? queue : [];
+  if (list.length <= MAX_PERSISTED_QUEUE) {
+    return { queue: list, index: list.length ? clamp(Number(index || 0), 0, list.length - 1) : -1 };
+  }
+  const safeIndex = clamp(Number(index || 0), 0, list.length - 1);
+  let start = Math.max(0, safeIndex - Math.floor(MAX_PERSISTED_QUEUE / 2));
+  start = Math.min(start, list.length - MAX_PERSISTED_QUEUE);
+  return {
+    queue: list.slice(start, start + MAX_PERSISTED_QUEUE),
+    index: safeIndex - start
+  };
 }
 
 function uniqueTracks(tracks) {

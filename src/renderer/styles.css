@@ -2501,3 +2501,279 @@ select:focus-visible,
     grid-template-columns: 1fr;
   }
 }
+
+
+/* v0.3.3 responsiveness guards */
+.queue-window-note {
+  padding: 10px 12px 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+.playlist-overflow-note {
+  padding: 8px 12px;
+  line-height: 1.45;
+}
+@supports (content-visibility: auto) {
+  .home-section,
+  .media-card {
+    content-visibility: auto;
+  }
+  .home-section {
+    contain-intrinsic-size: 420px;
+  }
+  .media-card {
+    contain-intrinsic-size: 220px 180px;
+  }
+}
+
+.library-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 26px 0 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+}
+
+.library-pagination > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.library-pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.library-pagination-actions strong {
+  min-width: 72px;
+  text-align: center;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.library-pagination button:disabled {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .library-pagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .library-pagination-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}
+
+/* XT Music now-playing and lyrics entry 0.3.6 */
+.player-cover {
+  position: relative;
+  overflow: hidden;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.player-cover.is-clickable {
+  cursor: pointer;
+}
+
+.player-cover.is-clickable:hover {
+  transform: translateY(-1px) scale(1.025);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.26), 0 0 0 1px rgba(229, 255, 79, 0.32);
+}
+
+.player-cover.is-clickable:focus-visible,
+.now-playing-title:focus-visible,
+.player-lyrics-button:focus-visible {
+  outline: 2px solid var(--accent, #e5ff4f);
+  outline-offset: 3px;
+}
+
+.now-playing-equalizer {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 21px;
+  height: 17px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 6px;
+  background: rgba(8, 10, 13, 0.78);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: translateY(4px) scale(0.9);
+  transition: opacity 150ms ease, transform 150ms ease;
+  pointer-events: none;
+}
+
+.player-cover.is-playing .now-playing-equalizer {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.now-playing-equalizer i {
+  display: block;
+  width: 2px;
+  min-height: 3px;
+  border-radius: 999px;
+  background: var(--accent, #e5ff4f);
+  animation: xt-now-playing-bar 760ms ease-in-out infinite alternate;
+}
+
+.now-playing-equalizer i:nth-child(1) { height: 45%; animation-delay: -180ms; }
+.now-playing-equalizer i:nth-child(2) { height: 95%; animation-delay: -420ms; }
+.now-playing-equalizer i:nth-child(3) { height: 66%; animation-delay: -80ms; }
+
+.player-bar.is-playing .progress-range::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgba(229, 255, 79, 0.12);
+}
+
+.player-lyrics-button {
+  width: auto !important;
+  min-width: 62px;
+  padding: 0 10px !important;
+  gap: 6px;
+  border-radius: 10px !important;
+}
+
+.player-lyrics-button span {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.now-playing-title:not(:disabled) {
+  cursor: pointer;
+}
+
+@keyframes xt-now-playing-bar {
+  from { transform: scaleY(0.35); }
+  to { transform: scaleY(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .now-playing-equalizer i { animation: none; }
+  .player-cover { transition: none; }
+}
+
+@media (max-width: 980px) {
+  .player-lyrics-button {
+    min-width: 36px;
+    width: 36px !important;
+    padding: 0 !important;
+  }
+  .player-lyrics-button span { display: none; }
+}
+
+/* XT_ALBUM_NAVIGATION_0_3_7: album-first artist pages and universal album links */
+.entity-link { min-width: 0; padding: 0; color: inherit; text-align: inherit; background: transparent; border: 0; }
+.entity-link:not(:disabled):hover { color: var(--text); text-decoration: underline; }
+.now-playing-meta { display: flex; align-items: center; min-width: 0; gap: 5px; color: var(--text-muted); font-size: 10px; }
+.now-playing-meta > * { min-width: 0; }
+#player-artist, .now-playing-album { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#player-artist { flex: 0 1 auto; }
+.now-playing-separator { flex: 0 0 auto; opacity: 0.55; }
+.now-playing-album { flex: 1 1 auto; padding: 0; color: var(--text-muted); text-align: left; background: transparent; border: 0; font-size: 10px; }
+.now-playing-album:disabled { cursor: default; opacity: 0.7; }
+.now-playing-album.is-clickable:hover { color: var(--text-secondary); text-decoration: underline; }
+.track-album-link { display: block; width: 100%; overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.track-album-link:hover { color: var(--text); }
+.lyrics-album-link, .lyrics-album-fallback { display: inline-flex; gap: 6px; align-items: center; max-width: 100%; margin-top: 6px; color: color-mix(in srgb, var(--lyrics-foreground) 48%, transparent); font-size: 11px; font-weight: 560; }
+.lyrics-album-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lyrics-album-link:hover { color: color-mix(in srgb, var(--lyrics-foreground) 78%, transparent); }
+.artist-albums-page .detail-hero { min-height: 300px; }
+.artist-albums-section { padding: 30px clamp(28px, 4vw, 58px) 54px; }
+.artist-albums-section .section-title-row { margin-bottom: 18px; }
+.artist-albums-section .section-title-row > div { display: flex; gap: 10px; align-items: baseline; }
+.artist-albums-section .section-title-row h2 { margin: 0; font-size: 21px; letter-spacing: -0.025em; }
+.artist-albums-section .section-title-row span { color: var(--text-muted); font-size: 11px; }
+.artist-album-grid { align-items: start; }
+@media (max-width: 860px) { .artist-albums-section { padding-right: 18px; padding-left: 18px; } }
+
+/* XT_TRACK_LIST_TYPOGRAPHY_0_3_7: readable song lists across library and detail pages */
+.virtual-track-table {
+  grid-template-rows: 42px minmax(0, 1fr);
+}
+
+.track-table-head {
+  font-size: 12px;
+  font-weight: 680;
+  letter-spacing: 0.025em;
+}
+
+.track-table-row {
+  font-size: 13px;
+}
+
+.track-col-index {
+  font-size: 12px;
+}
+
+.track-row-cover {
+  width: 42px;
+  height: 42px;
+}
+
+.track-row-title {
+  font-size: 14px;
+  font-weight: 630;
+  line-height: 1.35;
+}
+
+.track-row-subtitle,
+.track-col-album,
+.track-col-date,
+.track-col-duration {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.track-album-link {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* The play queue is also a song list, so keep it visually consistent. */
+.queue-row {
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  min-height: 54px;
+}
+
+.queue-row-cover {
+  width: 42px;
+  height: 42px;
+}
+
+.queue-row-title {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.queue-row-artist {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* Song rows used in picker dialogs should not fall back to 10px metadata. */
+.selectable-row {
+  font-size: 13px;
+}
+
+.selectable-row small {
+  font-size: 11px;
+}
+

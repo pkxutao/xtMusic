@@ -11,6 +11,9 @@ import {
   trackDuration
 } from './utils.js';
 
+const MAX_SIDEBAR_PLAYLISTS = 120;
+const MAX_PLAYLIST_PICKER_ITEMS = 500;
+
 export function loginView({ accounts = [], encryptionAvailable = true, error = null } = {}) {
   const accountRows = accounts.map((account) => `
     <button class="saved-account-card" data-login-account="${attr(account.id)}" type="button">
@@ -147,6 +150,10 @@ export function loginView({ accounts = [], encryptionAvailable = true, error = n
 
 export function sidebarView(state) {
   const session = state.session || {};
+  const playlists = Array.isArray(state.playlists) ? state.playlists : [];
+  const visiblePlaylists = playlists.slice(0, MAX_SIDEBAR_PLAYLISTS);
+  const playlistTotal = Math.max(Number(state.playlistTotal || 0), playlists.length);
+  const hiddenPlaylistCount = Math.max(0, playlistTotal - visiblePlaylists.length);
   const nav = [
     ['home', 'home', '首页'],
     ['tracks', 'music', '歌曲'],
@@ -177,7 +184,7 @@ export function sidebarView(state) {
           <button class="icon-button tiny" data-action="create-playlist" title="新建歌单">${icon('plus', 15)}</button>
         </div>
         <div class="playlist-nav-list">
-          ${(state.playlists || []).map((playlist) => `
+          ${visiblePlaylists.map((playlist) => `
             <button class="nav-item nav-playlist ${current === 'playlist' && state.route.params?.guid === playlist.guid ? 'is-active' : ''}"
                     data-open-kind="playlist"
                     data-open-id="${attr(playlist.guid)}">
@@ -185,6 +192,7 @@ export function sidebarView(state) {
               <span title="${attr(playlist.name)}">${escapeHtml(playlist.name)}</span>
             </button>
           `).join('') || '<div class="nav-empty">还没有歌单</div>'}
+          ${hiddenPlaylistCount ? `<div class="nav-empty playlist-overflow-note">另有 ${hiddenPlaylistCount} 个歌单按需加载</div>` : ''}
         </div>
       </nav>
       <div class="sidebar-spacer"></div>
@@ -230,7 +238,15 @@ export function homeView(data, session) {
   `;
 }
 
-export function gridPageView({ title, subtitle, items, kind, total = 0, iconName = 'album' }) {
+export function gridPageView({
+  title,
+  subtitle,
+  items,
+  kind,
+  total = 0,
+  pagination = null,
+  iconName = 'album'
+}) {
   return `
     <div class="page library-page">
       <div class="page-heading">
@@ -246,11 +262,53 @@ export function gridPageView({ title, subtitle, items, kind, total = 0, iconName
       <div class="media-grid ${kind === 'artist' ? 'artist-grid' : ''}">
         ${items.map((item) => mediaCard(item, kind)).join('') || emptyState(iconName, `没有${title}`)}
       </div>
+      ${paginationView(pagination)}
     </div>
   `;
 }
 
-export function trackPageView({ title, subtitle, tracks, kind = 'tracks', actionLabel = null }) {
+export function artistAlbumsView({ item, albums, pagination = null }) {
+  const title = item?.name || item?.title || '未知歌手';
+  const total = Number(pagination?.total || albums?.length || item?.albumCount || 0);
+  const coverId = item?.coverId || albums?.find((album) => album?.coverId)?.coverId;
+  const trackCount = Number(item?.trackCount || 0);
+  return `
+    <div class="page detail-page artist-albums-page">
+      <section class="detail-hero artist-albums-hero">
+        <div class="detail-backdrop" style="${coverId ? `background-image:url('${attr(coverUrl(coverId, 800))}')` : ''}"></div>
+        <div class="detail-hero-content">
+          ${imageHtml(item?.coverId, title, 'detail-cover round', 900)}
+          <div class="detail-copy">
+            <p class="eyebrow">歌手</p>
+            <h1>${escapeHtml(title)}</h1>
+            <p class="detail-meta">${total} 张专辑${trackCount ? ` · ${trackCount} 首歌曲` : ''}</p>
+            <div class="detail-actions">
+              <button class="secondary-button" data-action="refresh">${icon('refresh', 16)}刷新专辑</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="artist-albums-section">
+        <div class="section-title-row">
+          <div><h2>专辑</h2><span>${total} 张</span></div>
+        </div>
+        <div class="media-grid artist-album-grid">
+          ${(albums || []).map((album) => mediaCard(album, 'album')).join('') || emptyState('album', '这个歌手暂时没有可浏览的专辑')}
+        </div>
+        ${paginationView(pagination)}
+      </section>
+    </div>
+  `;
+}
+
+export function trackPageView({
+  title,
+  subtitle,
+  tracks,
+  kind = 'tracks',
+  actionLabel = null,
+  pagination = null
+}) {
   return `
     <div class="page tracks-page">
       <div class="page-heading track-page-heading">
@@ -268,11 +326,12 @@ export function trackPageView({ title, subtitle, tracks, kind = 'tracks', action
         </div>
       </div>
       ${tracks.length ? '<div id="track-table-host" class="track-table-host"></div>' : emptyState('music', '这里还没有歌曲')}
+      ${paginationView(pagination)}
     </div>
   `;
 }
 
-export function detailView({ kind, item, tracks }) {
+export function detailView({ kind, item, tracks, pagination = null }) {
   const title = item.name || item.title || '未知';
   const coverId = item.coverId || tracks?.[0]?.coverId || tracks?.[0]?.album?.coverId;
   const meta = detailMeta(kind, item, tracks);
@@ -300,6 +359,7 @@ export function detailView({ kind, item, tracks }) {
           <div><h2>歌曲</h2><span>${tracks.length} 首</span></div>
         </div>
         ${tracks.length ? '<div id="track-table-host" class="track-table-host detail-table"></div>' : emptyState('music', '没有可播放的歌曲')}
+        ${paginationView(pagination)}
       </section>
     </div>
   `;
@@ -346,7 +406,16 @@ export function lyricsView(playerState) {
           <div class="lyrics-track-copy">
             <h1>${escapeHtml(track.title)}</h1>
             <p>${escapeHtml(artistsText(track))}</p>
-            <span>${escapeHtml(track.album?.name || '未知专辑')}</span>
+            ${track.album?.guid ? `
+              <button class="lyrics-album-link entity-link"
+                      type="button"
+                      data-open-kind="album"
+                      data-open-id="${attr(track.album.guid)}"
+                      data-open-name="${attr(track.album.name || '未知专辑')}"
+                      data-open-cover-id="${attr(track.album.coverId || track.coverId || '')}">
+                ${icon('album', 14)}<span>${escapeHtml(track.album.name || '未知专辑')}</span>
+              </button>
+            ` : `<span class="lyrics-album-fallback">${escapeHtml(track.album?.name || '未知专辑')}</span>`}
           </div>
         </div>
         <div id="lyrics-scroll" class="lyrics-scroll">
@@ -457,12 +526,13 @@ export function accountModal(accounts, activeId) {
 }
 
 export function playlistModal(playlists, tracks) {
+  const visiblePlaylists = (Array.isArray(playlists) ? playlists : []).slice(0, MAX_PLAYLIST_PICKER_ITEMS);
   return `
     <div class="modal-backdrop" data-modal-backdrop="true">
       <section class="modal small-modal" role="dialog" aria-modal="true">
         <header class="modal-header"><div><p class="eyebrow">添加到歌单</p><h2>${tracks.length} 首歌曲</h2></div><button class="icon-button" data-action="close-modal">${icon('close', 19)}</button></header>
         <div class="modal-body selectable-list">
-          ${playlists.map((playlist) => `
+          ${visiblePlaylists.map((playlist) => `
             <button class="selectable-row" data-action="confirm-add-playlist" data-id="${attr(playlist.guid)}">
               ${imageHtml(playlist.coverId, playlist.name, 'selectable-cover', 128)}
               <span><strong>${escapeHtml(playlist.name)}</strong><small>${playlist.trackCount || 0} 首歌曲</small></span>
@@ -488,6 +558,26 @@ export function promptModal({ title, label, value = '', action, danger = false, 
         </form>
       </section>
     </div>
+  `;
+}
+
+function paginationView(pagination) {
+  if (!pagination || Number(pagination.pages || 1) <= 1) return '';
+  const page = Math.max(1, Number(pagination.page || 1));
+  const pages = Math.max(1, Number(pagination.pages || 1));
+  const previous = Math.max(1, page - 1);
+  const next = Math.min(pages, page + 1);
+  return `
+    <nav class="library-pagination" aria-label="音乐库分页">
+      <span>第 ${pagination.start || 0}–${pagination.end || 0} 项，共 ${pagination.total || 0} 项</span>
+      <div class="library-pagination-actions">
+        <button class="secondary-button compact" data-action="library-page" data-page="1" ${page <= 1 ? 'disabled' : ''}>${icon('chevronLeft', 15)}首页</button>
+        <button class="secondary-button compact" data-action="library-page" data-page="${previous}" ${page <= 1 ? 'disabled' : ''}>上一页</button>
+        <strong>${page} / ${pages}</strong>
+        <button class="secondary-button compact" data-action="library-page" data-page="${next}" ${page >= pages ? 'disabled' : ''}>下一页</button>
+        <button class="secondary-button compact" data-action="library-page" data-page="${pages}" ${page >= pages ? 'disabled' : ''}>末页${icon('chevronRight', 15)}</button>
+      </div>
+    </nav>
   `;
 }
 
@@ -530,10 +620,20 @@ function mediaCard(item, kind) {
         ? `${item.trackCount || 0} 首歌曲`
         : `${item.trackCount || 0} 首歌曲`;
   return `
-    <article class="media-card ${kind}-card" data-open-kind="${kind}" data-open-id="${attr(item.guid)}">
+    <article class="media-card ${kind}-card"
+             data-open-kind="${kind}"
+             data-open-id="${attr(item.guid)}"
+             data-open-name="${attr(name)}"
+             data-open-cover-id="${attr(item.coverId || '')}">
       <div class="media-card-art">
         ${imageHtml(item.coverId, name, coverClass, 480)}
-        <button class="card-play" data-open-kind="${kind}" data-open-id="${attr(item.guid)}" data-autoplay="true" aria-label="打开并播放">${icon('play', 20)}</button>
+        <button class="card-play"
+                data-open-kind="${kind}"
+                data-open-id="${attr(item.guid)}"
+                data-open-name="${attr(name)}"
+                data-open-cover-id="${attr(item.coverId || '')}"
+                data-autoplay="true"
+                aria-label="打开并播放">${icon('play', 20)}</button>
       </div>
       <strong title="${attr(name)}">${escapeHtml(name)}</strong>
       <span>${escapeHtml(sub)}</span>

@@ -1,0 +1,35 @@
+{
+  "verifiedAt": "2026-08-26T07:23:39.820Z",
+  "totals": {
+    "tracks": 4219,
+    "albums": 1595,
+    "artists": 1005
+  },
+  "albumPageOne": {
+    "cards": 72,
+    "nodes": 1077,
+    "images": 0,
+    "pager": "1 / 23"
+  },
+  "albumPageTwo": {
+    "cards": 72,
+    "nodes": 1077,
+    "images": 0,
+    "pager": "2 / 23"
+  },
+  "disposed": {
+    "nodes": 236,
+    "contentChildren": 0,
+    "sidebarChildren": 0,
+    "queueChildren": 0,
+    "images": 0
+  },
+  "getAlbumPages": [
+    1,
+    2
+  ],
+  "getTrackPages": [
+    1
+  ],
+  "eventLoopLagMs": 0
+}
