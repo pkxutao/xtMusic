@@ -1,0 +1,96 @@
+name: Build Compact Whole-Line Lyrics
+
+on:
+  push:
+    branches:
+      - fix/now-playing-lyrics-0.3.6
+    paths:
+      - src/renderer/lyrics-line-mode.css
+      - src/renderer/index.html
+      - scripts/build-renderer.js
+      - scripts/windows-compact-lyrics-smoke.js
+      - tests/lyrics-line-mode.test.js
+      - .github/workflows/build-compact-line-lyrics.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xtmusic-compact-line-lyrics
+  cancel-in-progress: true
+
+jobs:
+  build-test-package:
+    runs-on: windows-2025
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run application and regression tests
+        run: npm run build
+
+      - name: Verify renderer assets
+        run: node scripts/verify-renderer-assets.js
+
+      - name: Exercise now-playing and lyrics entry points
+        run: npx electron scripts/windows-now-playing-smoke.js
+
+      - name: Verify compact whole-line lyric rendering
+        run: npx electron scripts/windows-compact-lyrics-smoke.js
+
+      - name: Build Windows installer and portable package
+        run: npm run dist:win
+
+      - name: Rename packages, verify size, and generate checksums
+        shell: pwsh
+        run: |
+          $installer = Get-Item 'release/XT-Music-0.3.6-x64.exe'
+          $portable = Get-Item 'release/XT-Music-Portable-0.3.6-x64.exe'
+          if ($installer.Length -lt 50000000) { throw "Installer is unexpectedly small: $($installer.Length)" }
+          if ($portable.Length -lt 50000000) { throw "Portable package is unexpectedly small: $($portable.Length)" }
+
+          $installerOut = 'release/XT-Music-0.3.6-Compact-Line-Lyrics-x64.exe'
+          $portableOut = 'release/XT-Music-Portable-0.3.6-Compact-Line-Lyrics-x64.exe'
+          Copy-Item $installer.FullName $installerOut
+          Copy-Item $portable.FullName $portableOut
+
+          Get-FileHash $installerOut, $portableOut -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
+            Set-Content 'release/SHA256SUMS-Windows-Compact-Line-Lyrics.txt'
+
+          @(
+            'XT Music 0.3.6 compact whole-line lyrics verification'
+            ''
+            '- Lyrics font size is capped at 28px at 1440px desktop width.'
+            '- The active lyric uses one solid foreground color.'
+            '- Progressive left-to-right text fill is disabled.'
+            '- Exactly one timestamped lyric line is active at a time.'
+            '- Cover, title, and lyrics button entry regression remains enabled.'
+          ) | Set-Content 'release/COMPACT-LINE-LYRICS-VERIFICATION.txt'
+
+          Get-Content 'release/SHA256SUMS-Windows-Compact-Line-Lyrics.txt'
+          Get-Content 'ui-proof/windows-compact-lyrics.json'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Windows-Compact-Line-Lyrics-0.3.6-r2
+          path: |
+            release/XT-Music-0.3.6-Compact-Line-Lyrics-x64.exe
+            release/XT-Music-Portable-0.3.6-Compact-Line-Lyrics-x64.exe
+            release/SHA256SUMS-Windows-Compact-Line-Lyrics.txt
+            release/COMPACT-LINE-LYRICS-VERIFICATION.txt
+            ui-proof/renderer-assets.json
+            ui-proof/windows-now-playing-smoke.json
+            ui-proof/windows-compact-lyrics.json
+            ui-proof/windows-compact-lyrics.png
+          if-no-files-found: error
+          retention-days: 30
