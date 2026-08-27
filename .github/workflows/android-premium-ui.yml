@@ -6,6 +6,8 @@ on:
       - feat/android-premium-ui-0.1.0-alpha03
     paths:
       - "android/**"
+      - "scripts/apply_android_premium_ui_alpha03.py"
+      - "scripts/android-premium-ui-alpha03/**"
       - ".github/workflows/android-premium-ui.yml"
   workflow_dispatch:
 
