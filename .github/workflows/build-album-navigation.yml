@@ -33,6 +33,7 @@ jobs:
           python scripts/patch-album-protocol.py
           python scripts/patch-album-views.py
           python scripts/patch-album-app.py
+          python scripts/patch-album-table-navigation.py
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
