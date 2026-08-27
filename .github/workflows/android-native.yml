@@ -1,0 +1,102 @@
+name: Android Native Alpha
+
+on:
+  push:
+    branches:
+      - feat/android-native-0.1.0
+    paths:
+      - "scripts/android-alpha02-payload/**"
+      - "scripts/extract_android_alpha02.py"
+      - ".github/workflows/android-native.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xtmusic-android-native-alpha
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore the verified native Android source
+        run: python scripts/extract_android_alpha02.py
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Run unit tests and build APK
+        run: gradle -p android --no-daemon testDebugUnitTest assembleDebug
+
+      - name: Run Android lint
+        run: gradle -p android --no-daemon lintDebug
+
+      - name: Prepare and verify downloadable APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+            artifact/XT-Music-Android-0.1.0-alpha02-universal-debug.apk
+          test "$(stat -c%s artifact/XT-Music-Android-0.1.0-alpha02-universal-debug.apk)" -gt 500000
+          unzip -t artifact/XT-Music-Android-0.1.0-alpha02-universal-debug.apk
+          (
+            cd artifact
+            sha256sum XT-Music-Android-0.1.0-alpha02-universal-debug.apk > SHA256SUMS.txt
+          )
+          cat > artifact/BUILD-INFO.txt <<EOF
+          XT Music Android 0.1.0-alpha02
+          Native UI: Kotlin + Android platform Views (no WebView)
+          Playback: MediaPlayer + foreground MediaSession service
+          Minimum Android: 8.0 / API 26
+          Commit: ${GITHUB_SHA}
+          Workflow run: ${GITHUB_RUN_ID}
+          Unit tests: PASS
+          Android lint: PASS
+          APK build: PASS
+          APK ZIP integrity: PASS
+          EOF
+          cat artifact/SHA256SUMS.txt
+
+      - name: Commit the validated Android source to the branch
+        shell: bash
+        run: |
+          rm -rf android/.gradle android/build android/app/build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat(android): add native alpha application source [skip ci]'
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Android-0.1.0-alpha02
+          path: |
+            artifact/XT-Music-Android-0.1.0-alpha02-universal-debug.apk
+            artifact/SHA256SUMS.txt
+            artifact/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 30
