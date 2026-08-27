@@ -1,0 +1,118 @@
+name: Android Premium UI Alpha03
+
+on:
+  push:
+    branches:
+      - feat/android-premium-ui-0.1.0-alpha03
+    paths:
+      - "android/**"
+      - ".github/workflows/android-premium-ui.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xtmusic-android-premium-ui-alpha03
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply premium Android UI source
+        run: python scripts/apply_android_premium_ui_alpha03.py
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Verify native image-rich implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f android/app/src/main/java/com/pkxutao/xtmusic/android/ArtworkLoader.kt
+          grep -q "fun getHome" android/app/src/main/java/com/pkxutao/xtmusic/android/FnosClient.kt
+          grep -q "fun fetchArtwork" android/app/src/main/java/com/pkxutao/xtmusic/android/FnosClient.kt
+          grep -q "renderArtistDetail" android/app/src/main/java/com/pkxutao/xtmusic/android/MainActivity.kt
+          grep -q "renderAlbumDetail" android/app/src/main/java/com/pkxutao/xtmusic/android/MainActivity.kt
+          grep -q "backgroundArtwork" android/app/src/main/java/com/pkxutao/xtmusic/android/NowPlayingActivity.kt
+          ! grep -R "android.webkit.WebView" android/app/src/main/java
+
+      - name: Run unit tests and build APK
+        run: gradle -p android --no-daemon testDebugUnitTest assembleDebug
+
+      - name: Run Android lint
+        run: gradle -p android --no-daemon lintDebug
+
+      - name: Prepare and verify downloadable APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+            artifact/XT-Music-Android-0.1.0-alpha03-Premium-UI-universal-debug.apk
+          APK=artifact/XT-Music-Android-0.1.0-alpha03-Premium-UI-universal-debug.apk
+          test "$(stat -c%s "$APK")" -gt 500000
+          unzip -t "$APK"
+          aapt dump badging "$APK" | tee artifact/APK-BADGING.txt
+          (
+            cd artifact
+            sha256sum XT-Music-Android-0.1.0-alpha03-Premium-UI-universal-debug.apk > SHA256SUMS.txt
+          )
+          cat > artifact/BUILD-INFO.txt <<INFO
+          XT Music Android 0.1.0-alpha03 Premium UI
+          Native UI: Kotlin + Android platform Views; no WebView
+          Artwork: authenticated FNOS cover loader with memory and disk cache
+          Screens: image-rich home, album-first artist, album detail, premium now playing
+          Minimum Android: 8.0 / API 26
+          Commit: ${GITHUB_SHA}
+          Workflow run: ${GITHUB_RUN_ID}
+          Unit tests: PASS
+          Android lint: PASS
+          APK build: PASS
+          APK ZIP integrity: PASS
+          INFO
+          cat artifact/SHA256SUMS.txt
+
+      - name: Commit validated premium UI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf android/.gradle android/build android/app/build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat(android): implement premium image-rich UI [skip ci]'
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Android-0.1.0-alpha03-Premium-UI
+          path: |
+            artifact/XT-Music-Android-0.1.0-alpha03-Premium-UI-universal-debug.apk
+            artifact/SHA256SUMS.txt
+            artifact/BUILD-INFO.txt
+            artifact/APK-BADGING.txt
+            android/app/build/reports/lint-results-debug.html
+            android/app/build/reports/tests/testDebugUnitTest/**
+          if-no-files-found: error
+          retention-days: 30
