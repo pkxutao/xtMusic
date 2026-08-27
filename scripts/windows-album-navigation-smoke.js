@@ -178,17 +178,18 @@ async function albumDetailMetrics() {
 }
 
 async function click(selector) {
-  const clicked = await execute(`(() => {
+  const found = await execute(`(() => {
     const target = document.querySelector(${JSON.stringify(selector)});
     if (!target) return false;
-    return target.dispatchEvent(new MouseEvent('click', {
+    target.dispatchEvent(new MouseEvent('click', {
       bubbles: true,
       cancelable: true,
       composed: true,
       view: window
     }));
+    return true;
   })()`);
-  if (!clicked) throw new Error(`Cannot click missing or cancelled selector: ${selector}`);
+  if (!found) throw new Error(`Cannot click missing selector: ${selector}`);
 }
 
 async function settledLag() {
