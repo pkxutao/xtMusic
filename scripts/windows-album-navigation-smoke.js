@@ -42,29 +42,24 @@ app.whenReady().then(async () => {
 
   await click('[data-route="artists"]');
   await waitFor(() => execute("Boolean(document.querySelector('.artist-card'))"), 5000, 'artist list');
-  await click('.artist-card');
+  await click('.artist-card strong');
   await waitFor(() => execute("Boolean(document.querySelector('.artist-albums-page'))"), 5000, 'artist album page');
   await waitFor(() => execute("document.querySelectorAll('.artist-albums-page .album-card').length === 3"), 3000, 'artist album cards');
 
-  const artistPage = await execute(`(() => ({
-    title: document.querySelector('.artist-albums-page h1')?.textContent?.trim() || '',
-    albumCards: document.querySelectorAll('.artist-albums-page .album-card').length,
-    trackHost: Boolean(document.querySelector('.artist-albums-page #track-table-host')),
-    trackRows: document.querySelectorAll('.artist-albums-page .track-table-row').length
-  }))()`);
+  const artistPage = await snapshot();
   if (artistPage.albumCards !== 3 || artistPage.trackHost || artistPage.trackRows) {
     throw new Error(`Artist detail is not album-first: ${JSON.stringify(artistPage)}`);
   }
   await capture('windows-artist-albums.png');
 
-  await click('.artist-albums-page .album-card[data-open-id="album-b"]');
-  await waitForAlbumDetail('远山');
+  await click('.artist-albums-page .album-card[data-open-id="album-b"] strong');
+  await waitForAlbumDetail('远山', 'artist-card');
   const fromArtist = await albumDetailMetrics();
 
   await click('[data-route="tracks"]');
   await waitFor(() => execute("Boolean(document.querySelector('.tracks-page .track-album-link[data-open-id=\"album-b\"]'))"), 5000, 'track album link');
   await click('.track-album-link[data-open-id="album-b"]');
-  await waitForAlbumDetail('远山');
+  await waitForAlbumDetail('远山', 'track-table');
   const fromTrackTable = await albumDetailMetrics();
 
   await click('[data-route="tracks"]');
@@ -84,7 +79,7 @@ app.whenReady().then(async () => {
     throw new Error(`Bottom player album is not navigable: ${JSON.stringify(playerAlbum)}`);
   }
   await click('#player-album');
-  await waitForAlbumDetail('晨光');
+  await waitForAlbumDetail('晨光', 'bottom-player');
   const fromBottomPlayer = await albumDetailMetrics();
 
   await click('[data-route="tracks"]');
@@ -103,8 +98,8 @@ app.whenReady().then(async () => {
     throw new Error(`Now-playing album is missing or not navigable: ${JSON.stringify(nowPlaying)}`);
   }
   await capture('windows-now-playing-album.png');
-  await click('.lyrics-album-link');
-  await waitForAlbumDetail('晨光');
+  await click('.lyrics-album-link span');
+  await waitForAlbumDetail('晨光', 'now-playing');
   const fromNowPlaying = await albumDetailMetrics();
 
   const calls = await execute("window.xtMusic.test.getCalls()");
@@ -140,24 +135,45 @@ app.whenReady().then(async () => {
   await shutdown(1);
 });
 
-async function waitForAlbumDetail(title) {
+async function waitForAlbumDetail(title, source) {
+  try {
+    await waitFor(
+      () => execute(`document.querySelector('.detail-page:not(.artist-albums-page) h1')?.textContent?.trim() === ${JSON.stringify(title)}`),
+      5000,
+      `album detail ${title}`
+    );
+  } catch (error) {
+    const debug = await snapshot();
+    throw new Error(`${error.message}; source=${source}; debug=${JSON.stringify(debug)}`);
+  }
   await waitFor(
-    () => execute(`document.querySelector('.detail-page h1')?.textContent?.trim() === ${JSON.stringify(title)}`),
-    5000,
-    `album detail ${title}`
-  );
-  await waitFor(
-    () => execute("document.querySelectorAll('.detail-page .track-table-row').length >= 1"),
+    () => execute("document.querySelectorAll('.detail-page:not(.artist-albums-page) .track-table-row').length >= 1"),
     4000,
     `album tracks ${title}`
   );
 }
 
+async function snapshot() {
+  return execute(`(() => ({
+    pageClass: document.querySelector('#content-root > .page')?.className || '',
+    headings: [...document.querySelectorAll('#content-root h1')].map((node) => node.textContent?.trim() || ''),
+    contentText: document.querySelector('#content-root')?.innerText?.slice(0, 800) || '',
+    albumCards: document.querySelectorAll('.artist-albums-page .album-card').length,
+    trackHost: Boolean(document.querySelector('.artist-albums-page #track-table-host')),
+    trackRows: document.querySelectorAll('.artist-albums-page .track-table-row').length,
+    cardData: [...document.querySelectorAll('.artist-albums-page .album-card')].map((node) => ({
+      id: node.dataset.openId || '',
+      name: node.dataset.openName || ''
+    })),
+    calls: window.xtMusic.test.getCalls()
+  }))()`);
+}
+
 async function albumDetailMetrics() {
   return execute(`(() => ({
-    title: document.querySelector('.detail-page h1')?.textContent?.trim() || '',
-    rows: document.querySelectorAll('.detail-page .track-table-row').length,
-    albumLinks: document.querySelectorAll('.detail-page .track-album-link').length
+    title: document.querySelector('.detail-page:not(.artist-albums-page) h1')?.textContent?.trim() || '',
+    rows: document.querySelectorAll('.detail-page:not(.artist-albums-page) .track-table-row').length,
+    albumLinks: document.querySelectorAll('.detail-page:not(.artist-albums-page) .track-album-link').length
   }))()`);
 }
 
@@ -165,10 +181,14 @@ async function click(selector) {
   const clicked = await execute(`(() => {
     const target = document.querySelector(${JSON.stringify(selector)});
     if (!target) return false;
-    target.click();
-    return true;
+    return target.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window
+    }));
   })()`);
-  if (!clicked) throw new Error(`Cannot click missing selector: ${selector}`);
+  if (!clicked) throw new Error(`Cannot click missing or cancelled selector: ${selector}`);
 }
 
 async function settledLag() {
