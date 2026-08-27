@@ -61,7 +61,10 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = XtColors.background
         window.navigationBarColor = XtColors.background
-        root = FrameLayout(this).apply { setBackgroundColor(XtColors.background) }
+        root = FrameLayout(this).apply {
+            setBackgroundColor(XtColors.background)
+            applySystemBarInsets()
+        }
         setContentView(root)
 
         if (Build.VERSION.SDK_INT >= 33 &&

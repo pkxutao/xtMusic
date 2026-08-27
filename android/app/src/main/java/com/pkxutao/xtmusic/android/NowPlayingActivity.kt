@@ -120,6 +120,7 @@ class NowPlayingActivity : Activity() {
         val screen = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(6), dp(18), dp(12))
+            applySystemBarInsets()
         }
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

@@ -6,8 +6,10 @@ import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.view.View
 import android.view.ViewOutlineProvider
+import android.view.WindowInsets
 import android.widget.ImageView
 import android.widget.TextView
 import kotlin.math.roundToInt
@@ -88,6 +90,56 @@ fun View.circleOutline() {
         override fun getOutline(view: View, outline: Outline) {
             outline.setOval(0, 0, view.width, view.height)
         }
+    }
+}
+
+
+@Suppress("DEPRECATION")
+fun View.applySystemBarInsets() {
+    val initialLeft = paddingLeft
+    val initialTop = paddingTop
+    val initialRight = paddingRight
+    val initialBottom = paddingBottom
+
+    setOnApplyWindowInsetsListener { view, insets ->
+        val left: Int
+        val top: Int
+        val right: Int
+        val bottom: Int
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val safeInsets = insets.getInsets(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
+            )
+            left = safeInsets.left
+            top = safeInsets.top
+            right = safeInsets.right
+            bottom = safeInsets.bottom
+        } else {
+            left = insets.systemWindowInsetLeft
+            top = insets.systemWindowInsetTop
+            right = insets.systemWindowInsetRight
+            bottom = insets.systemWindowInsetBottom
+        }
+        view.setPadding(
+            initialLeft + left,
+            initialTop + top,
+            initialRight + right,
+            initialBottom + bottom
+        )
+        insets
+    }
+
+    if (isAttachedToWindow) {
+        requestApplyInsets()
+    } else {
+        addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) {
+                view.removeOnAttachStateChangeListener(this)
+                view.requestApplyInsets()
+            }
+
+            override fun onViewDetachedFromWindow(view: View) = Unit
+        })
     }
 }
 
