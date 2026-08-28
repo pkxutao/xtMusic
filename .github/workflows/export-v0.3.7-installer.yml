@@ -1,0 +1,39 @@
+name: Export XT Music v0.3.7 Windows installer
+
+on:
+  push:
+    branches:
+      - chore/export-v0.3.7-installer-20260828
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download installer from the v0.3.7 release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          gh release download v0.3.7 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'XT-Music-0.3.7-x64.exe' \
+            --dir out
+          test -s out/XT-Music-0.3.7-x64.exe
+          sha256sum out/XT-Music-0.3.7-x64.exe | tee out/SHA256SUM.txt
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-0.3.7-x64-installer
+          path: |
+            out/XT-Music-0.3.7-x64.exe
+            out/SHA256SUM.txt
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
