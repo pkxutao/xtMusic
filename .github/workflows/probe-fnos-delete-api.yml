@@ -18,10 +18,9 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
+          import html
           import re
           import ssl
-          import sys
-          import urllib.error
           import urllib.parse
           import urllib.request
           from collections import deque
@@ -29,6 +28,7 @@ jobs:
           START_URLS = [
               "https://pkxutao.fnos.net/music/",
               "https://pkxutao.fnos.net/music",
+              "https://pkxutao.fnos.net/music/api/v1/track/list?page=1&size=1",
           ]
           context = ssl.create_default_context()
           context.check_hostname = False
@@ -38,95 +38,115 @@ jobs:
               urllib.request.HTTPRedirectHandler(),
           )
 
-          def fetch(url: str) -> tuple[str, bytes, str]:
+          def fetch(url: str) -> tuple[str, bytes, str, dict[str, str]]:
               request = urllib.request.Request(
                   url,
                   headers={
-                      "User-Agent": "Mozilla/5.0 XT-Music-CI-ReadOnly-Probe/1.0",
-                      "Accept": "text/html,application/javascript,text/javascript,*/*;q=0.8",
+                      "User-Agent": "Mozilla/5.0 XT-Music-CI-ReadOnly-Probe/2.0",
+                      "Accept": "text/html,application/javascript,text/javascript,application/json,*/*;q=0.8",
                   },
               )
               with opener.open(request, timeout=25) as response:
-                  body = response.read(25 * 1024 * 1024)
-                  return response.geturl(), body, response.headers.get("content-type", "")
+                  body = response.read(30 * 1024 * 1024)
+                  headers = {str(k).lower(): str(v) for k, v in response.headers.items()}
+                  return response.geturl(), body, response.headers.get("content-type", ""), headers
 
-          html_url = None
-          html = b""
+          documents: list[tuple[str, str]] = []
+          seed_urls: list[str] = []
+          allowed_hosts = {"pkxutao.fnos.net", "fnos.net", "www.fnos.net"}
+
           for candidate in START_URLS:
               try:
-                  final_url, body, content_type = fetch(candidate)
+                  final_url, body, content_type, headers = fetch(candidate)
+                  text = body.decode("utf-8", "ignore")
                   print(f"ENTRY {candidate} -> {final_url} ({content_type}, {len(body)} bytes)")
-                  html_url, html = final_url, body
-                  break
+                  print("ENTRY_HEADERS", {k: headers[k] for k in sorted(headers) if k in {"content-type", "location", "server", "set-cookie", "x-powered-by"}})
+                  print("=== ENTRY BODY START ===")
+                  print(text[:12000])
+                  print("=== ENTRY BODY END ===")
+                  documents.append((final_url, text))
+                  seed_urls.append(final_url)
+                  host = urllib.parse.urlsplit(final_url).hostname
+                  if host:
+                      allowed_hosts.add(host.lower())
               except Exception as error:
                   print(f"ENTRY_ERROR {candidate}: {type(error).__name__}: {error}")
-          if html_url is None:
-              raise SystemExit("Unable to fetch FNOS Music public frontend")
 
-          origin = urllib.parse.urlsplit(html_url)
-          allowed_origin = (origin.scheme, origin.netloc)
           queue: deque[str] = deque()
           seen: set[str] = set()
-          documents: list[tuple[str, str]] = []
 
           def enqueue(base: str, raw: str) -> None:
-              raw = raw.strip().strip('"\'')
-              if not raw or raw.startswith(("data:", "blob:", "javascript:")):
+              raw = html.unescape(raw.strip().strip('"\''))
+              if not raw or raw.startswith(("data:", "blob:", "javascript:", "mailto:")):
                   return
               absolute = urllib.parse.urljoin(base, raw)
               parts = urllib.parse.urlsplit(absolute)
-              if (parts.scheme, parts.netloc) != allowed_origin:
+              host = (parts.hostname or "").lower()
+              if parts.scheme not in {"http", "https"}:
+                  return
+              if host not in allowed_hosts and not host.endswith(".fnos.net"):
                   return
               clean = urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
-              if clean not in seen and clean.lower().split("?", 1)[0].endswith((".js", ".mjs", ".map")):
+              if clean not in seen:
                   queue.append(clean)
 
-          html_text = html.decode("utf-8", "ignore")
-          documents.append((html_url, html_text))
-          for match in re.finditer(r"(?:src|href)\s*=\s*[\"']([^\"']+)[\"']", html_text, re.I):
-              enqueue(html_url, match.group(1))
-          for match in re.finditer(r"[\"']([^\"']+\.(?:js|mjs|map)(?:\?[^\"']*)?)[\"']", html_text, re.I):
-              enqueue(html_url, match.group(1))
+          def discover(base: str, text: str) -> None:
+              patterns = [
+                  r"(?:src|href|action)\s*=\s*[\"']([^\"']+)[\"']",
+                  r"(?:url|location|location\.href|window\.location)\s*[:=]\s*[\"']([^\"']+)[\"']",
+                  r"content\s*=\s*[\"'][^\"']*url=([^\"';]+)",
+                  r"[\"']((?:https?:)?//[^\"']+)[\"']",
+                  r"[\"']([^\"']+\.(?:js|mjs|map)(?:\?[^\"']*)?)[\"']",
+              ]
+              for pattern in patterns:
+                  for match in re.finditer(pattern, text, re.I):
+                      enqueue(base, match.group(1))
+              for match in re.finditer(r"sourceMappingURL=([^\s*]+)", text, re.I):
+                  enqueue(base, match.group(1))
 
-          while queue and len(seen) < 120:
+          for base, text in list(documents):
+              discover(base, text)
+
+          while queue and len(seen) < 180:
               url = queue.popleft()
               if url in seen:
                   continue
               seen.add(url)
               try:
-                  final_url, body, content_type = fetch(url)
+                  final_url, body, content_type, headers = fetch(url)
                   text = body.decode("utf-8", "ignore")
                   documents.append((final_url, text))
-                  print(f"ASSET {final_url} ({content_type}, {len(body)} bytes)")
-                  for match in re.finditer(r"[\"']([^\"']+\.(?:js|mjs|map)(?:\?[^\"']*)?)[\"']", text, re.I):
-                      enqueue(final_url, match.group(1))
-                  for match in re.finditer(r"sourceMappingURL=([^\s*]+)", text, re.I):
-                      enqueue(final_url, match.group(1))
+                  print(f"ASSET {url} -> {final_url} ({content_type}, {len(body)} bytes)")
+                  discover(final_url, text)
               except Exception as error:
                   print(f"ASSET_ERROR {url}: {type(error).__name__}: {error}")
 
           route_patterns = [
               re.compile(r"/(?:music/api/v1/)?(?:track|file|audio|library|scan|folder|recycle|trash)(?:/[A-Za-z0-9_.~-]+)+", re.I),
               re.compile(r"/(?:favorite-track|play-history|playlist)(?:/[A-Za-z0-9_.~-]+)+", re.I),
+              re.compile(r"/(?:api/v[0-9]+/)?(?:file|files|entry|entries)(?:/[A-Za-z0-9_.~-]+)+", re.I),
           ]
           routes: set[str] = set()
           contexts: set[str] = set()
-          keyword = re.compile(r"delete|remove|trash|recycle|unlink|audioFileDeleted|isAudioFileDeleted|filePath|trackGUIDs?", re.I)
+          keyword = re.compile(r"delete|remove|trash|recycle|unlink|audioFileDeleted|isAudioFileDeleted|filePath|trackGUIDs?|rmFile", re.I)
           for url, text in documents:
               for pattern in route_patterns:
                   routes.update(match.group(0) for match in pattern.finditer(text))
               for match in keyword.finditer(text):
-                  start = max(0, match.start() - 180)
-                  end = min(len(text), match.end() + 260)
+                  start = max(0, match.start() - 240)
+                  end = min(len(text), match.end() + 420)
                   snippet = re.sub(r"\s+", " ", text[start:end])
-                  if any(token in snippet.lower() for token in ("/track/", "/file/", "audiofile", "trackguid")):
-                      contexts.add(snippet[:500])
+                  if any(token in snippet.lower() for token in ("/track/", "/file/", "audiofile", "trackguid", "recycle", "unlink", "delete")):
+                      contexts.add(snippet[:700])
 
+          print("\n=== DISCOVERED URLS ===")
+          for url in sorted(seen):
+              print(url)
           print("\n=== ROUTES ===")
           for route in sorted(routes, key=str.lower):
               print(route)
           print("\n=== DELETE-RELATED CONTEXTS ===")
-          for snippet in sorted(contexts)[:200]:
+          for snippet in sorted(contexts)[:300]:
               print(snippet)
-          print(f"\nSUMMARY documents={len(documents)} assets={len(seen)} routes={len(routes)} contexts={len(contexts)}")
+          print(f"\nSUMMARY documents={len(documents)} fetched={len(seen)} routes={len(routes)} contexts={len(contexts)}")
           PY
