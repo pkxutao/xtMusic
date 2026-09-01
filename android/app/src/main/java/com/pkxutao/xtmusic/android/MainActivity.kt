@@ -106,10 +106,20 @@ class MainActivity : Activity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        if (client == null || !::contentHost.isInitialized) return
+        val artistGuid = intent?.getStringExtra(EXTRA_OPEN_ARTIST_GUID).orEmpty()
+        if (artistGuid.isNotBlank()) {
+            val artistName = intent?.getStringExtra(EXTRA_OPEN_ARTIST_NAME).orEmpty().ifBlank { "歌手详情" }
+            intent?.removeExtra(EXTRA_OPEN_ARTIST_GUID)
+            intent?.removeExtra(EXTRA_OPEN_ARTIST_NAME)
+            showArtistDetail(Artist(artistGuid, artistName))
+            return
+        }
         val albumGuid = intent?.getStringExtra(EXTRA_OPEN_ALBUM_GUID).orEmpty()
-        if (albumGuid.isBlank() || client == null || !::contentHost.isInitialized) return
+        if (albumGuid.isBlank()) return
         val albumName = intent?.getStringExtra(EXTRA_OPEN_ALBUM_NAME).orEmpty().ifBlank { "专辑详情" }
         intent?.removeExtra(EXTRA_OPEN_ALBUM_GUID)
+        intent?.removeExtra(EXTRA_OPEN_ALBUM_NAME)
         showAlbumDetail(Album(albumGuid, albumName)) { showHome() }
     }
 
@@ -533,7 +543,7 @@ class MainActivity : Activity() {
         } else {
             LibraryPresentation.TRACK_LIST
         }
-        val adapter = LibraryAdapter(this, artworkLoader, { client }, presentation, rows)
+        val adapter = LibraryAdapter(this, artworkLoader, { client }, presentation, rows, ::openArtist)
         if (presentation == LibraryPresentation.MEDIA_GRID) {
             val grid = GridView(this).apply {
                 numColumns = 2
@@ -576,47 +586,56 @@ class MainActivity : Activity() {
         container.addView(pager(mode, total), matchWrap())
     }
 
+    private fun openArtist(artist: ArtistRef) {
+        if (artist.guid.isBlank()) return
+        showArtistDetail(Artist(guid = artist.guid, name = artist.name))
+    }
+
     private fun showArtistDetail(artist: Artist) {
         currentDestination = Destination.LIBRARY
         updateNavigation()
         setHeader(artist.name, true) { showLibrary(Mode.ARTISTS, 1) }
         val generation = nextGeneration()
-        showLoading("正在加载歌手专辑…")
+        showLoading("正在加载歌手歌曲与专辑…")
         val activeClient = client ?: return
         thread(name = "xtmusic-artist") {
             try {
-                val albums = activeClient.getArtistAlbums(artist.guid)
+                val detail = activeClient.getArtistDetail(artist.guid)
                 runOnUiThread {
                     if (generation != requestGeneration) return@runOnUiThread
-                    renderArtistDetail(artist, albums)
+                    renderArtistDetail(artist, detail, ArtistDetailTab.TRACKS)
                 }
             } catch (error: Exception) {
                 runOnUiThread {
                     if (generation != requestGeneration) return@runOnUiThread
-                    showError(error, "歌手专辑加载失败") { showArtistDetail(artist) }
+                    showError(error, "歌手详情加载失败") { showArtistDetail(artist) }
                 }
             }
         }
     }
 
-    private fun renderArtistDetail(artist: Artist, albums: List<Album>) {
-        val scroll = ScrollView(this).apply {
-            isVerticalScrollBarEnabled = false
+    private fun renderArtistDetail(
+        artist: Artist,
+        detail: ArtistDetail,
+        selectedTab: ArtistDetailTab
+    ) {
+        val tracks = detail.tracks
+        val albums = detail.albums
+        val screen = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), 0, dp(14), dp(8))
             setBackgroundColor(XtColors.background)
         }
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), 0, dp(14), dp(30))
-        }
+
         val hero = FrameLayout(this).apply {
-            background = roundedBackground(XtColors.surface, dp(26).toFloat())
-            roundedOutline(dp(26).toFloat())
+            background = roundedBackground(XtColors.surface, dp(24).toFloat())
+            roundedOutline(dp(24).toFloat())
         }
         val image = ImageView(this)
         artworkLoader.load(
             image,
             client,
-            artist.coverId ?: albums.firstOrNull()?.coverId,
+            artist.coverId ?: tracks.firstOrNull()?.artworkId ?: albums.firstOrNull()?.coverId,
             dp(900),
             artist.guid
         )
@@ -629,7 +648,7 @@ class MainActivity : Activity() {
         val copy = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.BOTTOM
-            setPadding(dp(20), dp(20), dp(20), dp(20))
+            setPadding(dp(18), dp(18), dp(18), dp(17))
         }
         val eyebrow = TextView(this).apply {
             text = "艺人"
@@ -637,31 +656,157 @@ class MainActivity : Activity() {
         }
         val name = TextView(this).apply {
             text = artist.name
-            styleText(32f, Color.WHITE, true)
-            setPadding(0, dp(6), 0, dp(6))
+            styleText(29f, Color.WHITE, true)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, dp(5), 0, dp(5))
         }
         val metrics = TextView(this).apply {
-            text = buildString {
-                append(if (albums.isNotEmpty()) "${albums.size} 张专辑" else "专辑")
-                if (artist.trackCount > 0) append(" · ${artist.trackCount} 首歌曲")
-            }
+            text = "${tracks.size} 首歌曲 · ${albums.size} 张专辑"
             styleText(13f, colorWithAlpha(Color.WHITE, 205))
         }
-        val follow = actionButton("＋ 关注", primary = true, compact = true).apply {
+        val playAll = actionButton("▶  播放全部", primary = true, compact = true).apply {
             gravity = Gravity.CENTER
+            isEnabled = tracks.isNotEmpty()
+            alpha = if (isEnabled) 1f else 0.45f
+            setOnClickListener { if (tracks.isNotEmpty()) playTracks(tracks, 0) }
         }
         copy.addView(eyebrow)
         copy.addView(name)
         copy.addView(metrics)
-        copy.addView(follow, LinearLayout.LayoutParams(dp(96), dp(40)).apply { topMargin = dp(14) })
+        copy.addView(playAll, LinearLayout.LayoutParams(dp(120), dp(40)).apply { topMargin = dp(12) })
         hero.addView(image, matchMatch())
         hero.addView(shade, matchMatch())
         hero.addView(copy, matchMatch())
-        content.addView(hero, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(300)))
-        content.addView(sectionHeader("专辑", "${albums.size} 张", null), matchWrap(top = 24))
-        content.addView(twoColumnAlbumGrid(albums, artist), matchWrap(top = 12))
-        scroll.addView(content, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        setContent(scroll)
+        screen.addView(hero, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(232)))
+
+        screen.addView(
+            artistDetailTabs(selectedTab, tracks.size, albums.size) { nextTab ->
+                if (nextTab != selectedTab) renderArtistDetail(artist, detail, nextTab)
+            },
+            matchWrap(top = 12)
+        )
+
+        val body = FrameLayout(this)
+        if (selectedTab == ArtistDetailTab.TRACKS) {
+            val songs = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+            val actions = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(2), dp(6), dp(2), dp(8))
+            }
+            val count = TextView(this).apply {
+                text = "歌曲 · ${tracks.size} 首"
+                styleText(17f, XtColors.text, true)
+            }
+            val playList = actionButton("▶ 播放列表歌曲", primary = true, compact = true).apply {
+                gravity = Gravity.CENTER
+                isEnabled = tracks.isNotEmpty()
+                alpha = if (isEnabled) 1f else 0.45f
+                setOnClickListener { if (tracks.isNotEmpty()) playTracks(tracks, 0) }
+            }
+            val shuffle = actionButton("随机", compact = true).apply {
+                gravity = Gravity.CENTER
+                isEnabled = tracks.isNotEmpty()
+                alpha = if (isEnabled) 1f else 0.45f
+                setOnClickListener { if (tracks.isNotEmpty()) playTracks(tracks.shuffled(), 0) }
+            }
+            actions.addView(count, LinearLayout.LayoutParams(0, dp(42), 1f))
+            actions.addView(playList, LinearLayout.LayoutParams(dp(126), dp(40)).apply { marginEnd = dp(6) })
+            actions.addView(shuffle, LinearLayout.LayoutParams(dp(58), dp(40)))
+            songs.addView(actions, matchWrap())
+
+            if (tracks.isEmpty()) {
+                songs.addView(emptyView("这个歌手暂时没有可播放的歌曲"), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                ))
+            } else {
+                val rows = tracks.map(::trackRow)
+                val adapter = LibraryAdapter(
+                    this,
+                    artworkLoader,
+                    { client },
+                    LibraryPresentation.TRACK_LIST,
+                    rows,
+                    ::openArtist
+                )
+                val list = ListView(this).apply {
+                    divider = android.graphics.drawable.ColorDrawable(XtColors.divider)
+                    dividerHeight = dp(1)
+                    setPadding(0, 0, 0, dp(8))
+                    clipToPadding = false
+                    isVerticalScrollBarEnabled = false
+                    this.adapter = adapter
+                    onItemClickListener = android.widget.AdapterView.OnItemClickListener { _, _, position, _ ->
+                        playTracks(tracks, position)
+                    }
+                }
+                songs.addView(list, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f
+                ))
+            }
+            body.addView(songs, matchMatch())
+        } else {
+            val scroll = ScrollView(this).apply {
+                isVerticalScrollBarEnabled = false
+                setBackgroundColor(XtColors.background)
+            }
+            val albumContent = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(7), 0, dp(28))
+            }
+            albumContent.addView(sectionHeader("专辑", "${albums.size} 张", null), matchWrap())
+            albumContent.addView(
+                twoColumnAlbumGrid(albums) { album ->
+                    showAlbumDetail(album) {
+                        renderArtistDetail(artist, detail, ArtistDetailTab.ALBUMS)
+                    }
+                },
+                matchWrap(top = 8)
+            )
+            scroll.addView(albumContent, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            body.addView(scroll, matchMatch())
+        }
+        screen.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        setContent(screen)
+    }
+
+    private fun artistDetailTabs(
+        selected: ArtistDetailTab,
+        trackCount: Int,
+        albumCount: Int,
+        onSelect: (ArtistDetailTab) -> Unit
+    ): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            ArtistDetailTab.entries.forEach { tab ->
+                val active = tab == selected
+                val label = when (tab) {
+                    ArtistDetailTab.TRACKS -> "歌曲  $trackCount"
+                    ArtistDetailTab.ALBUMS -> "专辑  $albumCount"
+                }
+                val button = TextView(this@MainActivity).apply {
+                    text = label
+                    styleText(14f, if (active) Color.WHITE else XtColors.muted, active)
+                    gravity = Gravity.CENTER
+                    background = roundedBackground(
+                        if (active) XtColors.primaryStrong else XtColors.surface,
+                        dp(17).toFloat()
+                    )
+                    setOnClickListener { onSelect(tab) }
+                }
+                addView(button, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+                    if (tab == ArtistDetailTab.TRACKS) marginEnd = dp(5) else marginStart = dp(5)
+                })
+            }
+        }
     }
 
     private fun showAlbumDetail(album: Album, onBack: (() -> Unit)? = null) {
@@ -715,10 +860,14 @@ class MainActivity : Activity() {
         val artistText = tracks.firstOrNull()?.artistText?.takeIf { it != "未知歌手" }
             ?: album.artistText
         val artist = TextView(this).apply {
-            text = artistText
             styleText(15f, XtColors.primarySoft, true)
             gravity = Gravity.CENTER
             setPadding(0, dp(8), 0, 0)
+            bindArtistLinks(
+                tracks.firstOrNull()?.artists ?: album.artists,
+                fallback = artistText,
+                onArtistClick = ::openArtist
+            )
         }
         val meta = TextView(this).apply {
             text = buildString {
@@ -835,7 +984,8 @@ class MainActivity : Activity() {
                         artworkLoader,
                         { client },
                         LibraryPresentation.TRACK_LIST,
-                        rows
+                        rows,
+                        ::openArtist
                     )
                     val list = ListView(this).apply {
                         divider = android.graphics.drawable.ColorDrawable(XtColors.divider)
@@ -953,7 +1103,13 @@ class MainActivity : Activity() {
     }
 
     private fun trackCard(track: Track): View {
-        val card = mediaCardBase(track.title, track.artistText, track.artworkId, track.guid)
+        val card = mediaCardBase(
+            track.title,
+            track.artistText,
+            track.artworkId,
+            track.guid,
+            track.artists
+        )
         card.setOnClickListener { playTracks(listOf(track), 0) }
         return card
     }
@@ -963,7 +1119,7 @@ class MainActivity : Activity() {
             album.releaseYear?.let { append(it).append(" · ") }
             append(if (album.artistText != "未知歌手") album.artistText else "专辑")
         }
-        return mediaCardBase(album.name, subtitle, album.coverId, album.guid).apply {
+        return mediaCardBase(album.name, subtitle, album.coverId, album.guid, album.artists).apply {
             setOnClickListener { onClick() }
         }
     }
@@ -972,7 +1128,8 @@ class MainActivity : Activity() {
         titleValue: String,
         subtitleValue: String,
         coverId: String?,
-        seed: String
+        seed: String,
+        artists: List<ArtistRef> = emptyList()
     ): LinearLayout {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1004,11 +1161,15 @@ class MainActivity : Activity() {
             setPadding(dp(2), dp(9), dp(2), 0)
         }
         val subtitle = TextView(this).apply {
-            text = subtitleValue
             styleText(12f, XtColors.muted)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             setPadding(dp(2), dp(4), dp(2), 0)
+            bindArtistLinks(
+                artists,
+                fallback = subtitleValue,
+                onArtistClick = ::openArtist
+            )
         }
         card.addView(imageFrame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(150)))
         card.addView(title, matchWrap())
@@ -1016,14 +1177,15 @@ class MainActivity : Activity() {
         return card
     }
 
-    private fun twoColumnAlbumGrid(albums: List<Album>, artist: Artist): LinearLayout {
+    private fun twoColumnAlbumGrid(
+        albums: List<Album>,
+        onAlbumClick: (Album) -> Unit
+    ): LinearLayout {
         val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         albums.chunked(2).forEach { pair ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             pair.forEachIndexed { index, album ->
-                val card = albumGridCard(album) {
-                    showAlbumDetail(album) { showArtistDetail(artist) }
-                }
+                val card = albumGridCard(album) { onAlbumClick(album) }
                 row.addView(card, LinearLayout.LayoutParams(0, dp(248), 1f).apply {
                     if (index == 0) marginEnd = dp(6) else marginStart = dp(6)
                 })
@@ -1092,11 +1254,15 @@ class MainActivity : Activity() {
                 ellipsize = TextUtils.TruncateAt.END
             }
             val artist = TextView(this@MainActivity).apply {
-                text = track.artistText
                 styleText(12f, XtColors.muted)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setPadding(0, dp(4), 0, 0)
+                bindArtistLinks(
+                    track.artists,
+                    fallback = track.artistText,
+                    onArtistClick = ::openArtist
+                )
             }
             copy.addView(title)
             copy.addView(artist)
@@ -1249,10 +1415,15 @@ class MainActivity : Activity() {
         miniPlayer.visibility = if (track == null) View.GONE else View.VISIBLE
         if (track == null) return
         miniTitle.text = track.title
-        miniSubtitle.text = buildString {
-            append(track.artistText).append(" · ").append(track.albumText)
-            snapshot.error?.let { append(" · ").append(it) }
-        }
+        miniSubtitle.bindArtistLinks(
+            track.artists,
+            fallback = track.artistText,
+            suffix = buildString {
+                append(" · ").append(track.albumText)
+                snapshot.error?.let { append(" · ").append(it) }
+            },
+            onArtistClick = ::openArtist
+        )
         miniToggle.text = if (snapshot.playing) "Ⅱ" else if (snapshot.preparing) "…" else "▶"
         artworkLoader.load(miniArtwork, client, track.artworkId, dp(180), track.guid)
     }
@@ -1413,6 +1584,11 @@ class MainActivity : Activity() {
     private fun albumRow(album: Album): LibraryRow = LibraryRow.AlbumRow(album)
     private fun artistRow(artist: Artist): LibraryRow = LibraryRow.ArtistRow(artist)
 
+    private enum class ArtistDetailTab {
+        TRACKS,
+        ALBUMS
+    }
+
     private enum class Destination {
         HOME,
         LIBRARY,
@@ -1431,5 +1607,9 @@ class MainActivity : Activity() {
     companion object {
         const val EXTRA_OPEN_ALBUM_GUID = "open_album_guid"
         const val EXTRA_OPEN_ALBUM_NAME = "open_album_name"
+        const val EXTRA_OPEN_ARTIST_GUID = "open_artist_guid"
+        const val EXTRA_OPEN_ARTIST_NAME = "open_artist_name"
     }
 }
+
+// XT_ANDROID_ARTIST_TABS_QUEUE_20260901

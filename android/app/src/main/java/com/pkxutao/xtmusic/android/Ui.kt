@@ -7,6 +7,11 @@ import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.TextPaint
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.WindowInsets
@@ -64,6 +69,55 @@ fun TextView.styleText(
     setTextColor(color)
     includeFontPadding = false
     if (bold) setTypeface(typeface, Typeface.BOLD)
+}
+
+
+fun TextView.bindArtistLinks(
+    artists: List<ArtistRef>,
+    fallback: String = "未知歌手",
+    prefix: String = "",
+    suffix: String = "",
+    onArtistClick: ((ArtistRef) -> Unit)? = null
+) {
+    val visible = artists.filter { it.name.isNotBlank() }
+    highlightColor = Color.TRANSPARENT
+    if (visible.isEmpty()) {
+        text = prefix + fallback + suffix
+        movementMethod = null
+        linksClickable = false
+        isClickable = false
+        return
+    }
+
+    val builder = SpannableStringBuilder(prefix)
+    visible.forEachIndexed { index, artist ->
+        if (index > 0) builder.append("、")
+        val start = builder.length
+        builder.append(artist.name)
+        val end = builder.length
+        if (artist.guid.isNotBlank() && onArtistClick != null) {
+            builder.setSpan(
+                object : ClickableSpan() {
+                    override fun onClick(widget: View) = onArtistClick(artist)
+
+                    override fun updateDrawState(drawState: TextPaint) {
+                        drawState.color = XtColors.primarySoft
+                        drawState.isUnderlineText = false
+                        drawState.typeface = Typeface.create(drawState.typeface, Typeface.BOLD)
+                    }
+                },
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+    }
+    builder.append(suffix)
+    text = builder
+    movementMethod = if (onArtistClick == null) null else LinkMovementMethod.getInstance()
+    linksClickable = onArtistClick != null
+    isClickable = onArtistClick != null
+    isFocusable = false
 }
 
 fun View.setPaddingDp(context: Context, horizontal: Int, vertical: Int) {
@@ -153,3 +207,5 @@ fun colorWithAlpha(color: Int, alpha: Int): Int = Color.argb(
     Color.green(color),
     Color.blue(color)
 )
+
+// XT_ANDROID_ARTIST_TABS_QUEUE_20260901

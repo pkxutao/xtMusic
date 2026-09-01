@@ -70,6 +70,7 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             ACTION_NEXT -> next()
             ACTION_PREVIOUS -> previous()
             ACTION_SEEK -> seek(intent.getLongExtra(EXTRA_POSITION_MS, 0))
+            ACTION_PLAY_INDEX -> playIndex(intent.getIntExtra(EXTRA_QUEUE_INDEX, -1))
             ACTION_STOP -> stopPlayback()
             else -> if (PlaybackQueue.current() != null && player == null) playCurrent()
         }
@@ -193,6 +194,10 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         abandonAudioFocus()
         updateNotification()
         updateSystemState()
+    }
+
+    private fun playIndex(index: Int) {
+        if (PlaybackQueue.select(index) != null) playCurrent()
     }
 
     private fun next() {
@@ -402,8 +407,10 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
         const val ACTION_NEXT = "com.pkxutao.xtmusic.android.NEXT"
         const val ACTION_PREVIOUS = "com.pkxutao.xtmusic.android.PREVIOUS"
         const val ACTION_SEEK = "com.pkxutao.xtmusic.android.SEEK"
+        const val ACTION_PLAY_INDEX = "com.pkxutao.xtmusic.android.PLAY_INDEX"
         const val ACTION_STOP = "com.pkxutao.xtmusic.android.STOP"
         const val EXTRA_POSITION_MS = "position_ms"
+        const val EXTRA_QUEUE_INDEX = "queue_index"
 
         private const val CHANNEL_ID = "xtmusic_playback"
         private const val NOTIFICATION_ID = 3701
@@ -420,5 +427,15 @@ class PlaybackService : Service(), AudioManager.OnAudioFocusChangeListener {
             if (positionMs != null) intent.putExtra(EXTRA_POSITION_MS, positionMs)
             context.startService(intent)
         }
+
+        fun playIndex(context: Context, queueIndex: Int) {
+            context.startService(
+                Intent(context, PlaybackService::class.java)
+                    .setAction(ACTION_PLAY_INDEX)
+                    .putExtra(EXTRA_QUEUE_INDEX, queueIndex)
+            )
+        }
     }
 }
+
+// XT_ANDROID_ARTIST_TABS_QUEUE_20260901

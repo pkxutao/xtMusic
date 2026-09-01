@@ -39,6 +39,11 @@ object PlaybackState {
     }
 }
 
+data class QueueSnapshot(
+    val tracks: List<Track>,
+    val index: Int
+)
+
 object PlaybackQueue {
     private var tracks: List<Track> = emptyList()
     private var index: Int = -1
@@ -46,7 +51,23 @@ object PlaybackQueue {
     @Synchronized
     fun set(items: List<Track>, selectedIndex: Int) {
         tracks = items.toList()
-        index = selectedIndex.coerceIn(0, (tracks.size - 1).coerceAtLeast(0))
+        index = if (tracks.isEmpty()) -1 else selectedIndex.coerceIn(0, tracks.lastIndex)
+    }
+
+    @Synchronized
+    fun snapshot(): QueueSnapshot = QueueSnapshot(tracks.toList(), index)
+
+    @Synchronized
+    fun select(selectedIndex: Int): Track? {
+        if (tracks.isEmpty() || selectedIndex !in tracks.indices) return null
+        index = selectedIndex
+        return current()
+    }
+
+    @Synchronized
+    fun clear() {
+        tracks = emptyList()
+        index = -1
     }
 
     @Synchronized
@@ -72,3 +93,5 @@ object PlaybackQueue {
     @Synchronized
     fun canPrevious(): Boolean = index > 0
 }
+
+// XT_ANDROID_ARTIST_TABS_QUEUE_20260901

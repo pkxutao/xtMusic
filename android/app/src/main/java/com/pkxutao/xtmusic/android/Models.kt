@@ -61,6 +61,12 @@ data class Page<T>(
     val size: Int
 )
 
+
+data class ArtistDetail(
+    val tracks: List<Track>,
+    val albums: List<Album>
+)
+
 data class HomeData(
     val history: List<Track>,
     val favorites: List<Track>,
@@ -78,3 +84,5 @@ data class MusicSession(
     val deviceId: String,
     val username: String
 )
+
+// XT_ANDROID_ARTIST_TABS_QUEUE_20260901

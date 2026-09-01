@@ -38,7 +38,8 @@ class LibraryAdapter(
     private val artworkLoader: ArtworkLoader,
     private val clientProvider: () -> FnosClient?,
     private val presentation: LibraryPresentation,
-    private var rows: List<LibraryRow> = emptyList()
+    private var rows: List<LibraryRow> = emptyList(),
+    private val onArtistClick: ((ArtistRef) -> Unit)? = null
 ) : BaseAdapter() {
     fun submit(newRows: List<LibraryRow>) {
         rows = newRows
@@ -152,7 +153,11 @@ class LibraryAdapter(
         val track = (rows[position] as? LibraryRow.TrackRow)?.track
         if (track == null) return root
         holder.title.text = track.title
-        holder.artist.text = track.artistText
+        holder.artist.bindArtistLinks(
+            track.artists,
+            fallback = track.artistText,
+            onArtistClick = onArtistClick
+        )
         holder.album.text = track.albumText
         holder.duration.text = formatDuration(track.durationSeconds)
         holder.fallback.visibility = View.VISIBLE
@@ -247,12 +252,14 @@ class LibraryAdapter(
             is LibraryRow.AlbumRow -> {
                 holder.artworkFrame.roundedOutline(context.dp(18).toFloat())
                 holder.title.text = row.album.name
-                holder.subtitle.text = buildString {
-                    row.album.releaseYear?.let { append(it).append(" · ") }
-                    if (row.album.artistText != "未知歌手") append(row.album.artistText)
-                    else if (row.album.trackCount > 0) append("${row.album.trackCount} 首歌曲")
-                    else append("专辑")
-                }
+                val prefix = row.album.releaseYear?.let { "$it · " }.orEmpty()
+                val fallback = if (row.album.trackCount > 0) "${row.album.trackCount} 首歌曲" else "专辑"
+                holder.subtitle.bindArtistLinks(
+                    row.album.artists,
+                    fallback = fallback,
+                    prefix = prefix,
+                    onArtistClick = onArtistClick
+                )
                 artworkLoader.load(
                     holder.artwork,
                     clientProvider(),
@@ -316,3 +323,5 @@ class LibraryAdapter(
         return "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
     }
 }
+
+// XT_ANDROID_ARTIST_TABS_QUEUE_20260901

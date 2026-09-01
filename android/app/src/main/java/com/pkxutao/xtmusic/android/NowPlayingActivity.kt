@@ -1,10 +1,12 @@
 package com.pkxutao.xtmusic.android
 
 import android.app.Activity
+import android.app.Dialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.RenderEffect
 import android.graphics.Shader
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +19,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
@@ -268,6 +271,8 @@ class NowPlayingActivity : Activity() {
         val queue = actionButton("≡", compact = true).apply {
             textSize = 22f
             setTextColor(XtColors.muted)
+            contentDescription = "打开播放队列"
+            setOnClickListener { showPlaybackQueue() }
         }
         controls.addView(shuffle, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(6) })
         controls.addView(previous, LinearLayout.LayoutParams(dp(58), dp(52)).apply { marginEnd = dp(12) })
@@ -333,7 +338,11 @@ class NowPlayingActivity : Activity() {
         }
         sourceAlbum.text = "来自专辑：${track.albumText}"
         title.text = track.title
-        artist.text = track.artistText
+        artist.bindArtistLinks(
+            track.artists,
+            fallback = track.artistText,
+            onArtistClick = ::openArtist
+        )
         album.text = "${track.albumText}  ›"
         album.isEnabled = track.album != null
         favorite.text = if (track.favorite) "♥" else "♡"
@@ -351,6 +360,101 @@ class NowPlayingActivity : Activity() {
             loadedTrackGuid = track.guid
             loadLyrics(track)
         }
+    }
+
+    private fun openArtist(artist: ArtistRef) {
+        if (artist.guid.isBlank()) return
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .putExtra(MainActivity.EXTRA_OPEN_ARTIST_GUID, artist.guid)
+                .putExtra(MainActivity.EXTRA_OPEN_ARTIST_NAME, artist.name)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        )
+    }
+
+    private fun showPlaybackQueue() {
+        val queueState = PlaybackQueue.snapshot()
+        val dialog = Dialog(this)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = roundedBackground(XtColors.backgroundElevated, dp(24).toFloat())
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val heading = TextView(this).apply {
+            text = "播放队列"
+            styleText(20f, XtColors.text, true)
+        }
+        val count = TextView(this).apply {
+            text = "${queueState.tracks.size} 首"
+            styleText(12f, XtColors.muted)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+        }
+        val close = actionButton("×", compact = true).apply {
+            textSize = 23f
+            setOnClickListener { dialog.dismiss() }
+        }
+        header.addView(heading, LinearLayout.LayoutParams(0, dp(46), 1f))
+        header.addView(count, LinearLayout.LayoutParams(dp(62), dp(46)))
+        header.addView(close, LinearLayout.LayoutParams(dp(44), dp(42)))
+        panel.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)))
+
+        if (queueState.tracks.isEmpty()) {
+            panel.addView(emptyQueueView(), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(220)
+            ))
+        } else {
+            val rows = queueState.tracks.map { LibraryRow.TrackRow(it) }
+            val adapter = LibraryAdapter(
+                this,
+                artworkLoader,
+                { client },
+                LibraryPresentation.TRACK_LIST,
+                rows
+            ) { selectedArtist ->
+                dialog.dismiss()
+                openArtist(selectedArtist)
+            }
+            val list = ListView(this).apply {
+                divider = ColorDrawable(XtColors.divider)
+                dividerHeight = dp(1)
+                clipToPadding = false
+                setPadding(0, dp(4), 0, dp(8))
+                this.adapter = adapter
+                onItemClickListener = android.widget.AdapterView.OnItemClickListener { _, _, position, _ ->
+                    PlaybackService.playIndex(this@NowPlayingActivity, position)
+                    dialog.dismiss()
+                }
+                if (queueState.index >= 0) setSelection(queueState.index)
+            }
+            panel.addView(list, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            ))
+        }
+
+        dialog.setContentView(panel)
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setGravity(Gravity.BOTTOM)
+            setLayout(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                (resources.displayMetrics.heightPixels * 0.72f).toInt()
+            )
+            decorView.setPadding(dp(10), 0, dp(10), dp(10))
+        }
+    }
+
+    private fun emptyQueueView(): TextView = TextView(this).apply {
+        text = "播放队列为空\n从歌曲列表选择一首歌曲开始播放"
+        styleText(14f, XtColors.muted)
+        gravity = Gravity.CENTER
     }
 
     private fun openAlbum() {
@@ -510,3 +614,5 @@ class NowPlayingActivity : Activity() {
         return "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
     }
 }
+
+// XT_ANDROID_ARTIST_TABS_QUEUE_20260901

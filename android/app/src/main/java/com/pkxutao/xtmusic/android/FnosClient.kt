@@ -75,27 +75,27 @@ class FnosClient(private var session: MusicSession) {
             mapOf("albumGUID" to albumGuid)
         )
 
-    fun getArtistAlbums(artistGuid: String): List<Album> {
+    fun getArtistTracks(
+        artistGuid: String,
+        page: Int = 1,
+        size: Int = 400
+    ): Page<Track> = page(
+        "/track/artist-detail/list",
+        page,
+        size,
+        ::parseTrack,
+        mapOf("artistGUID" to artistGuid)
+    )
+
+    fun getArtistDetail(artistGuid: String): ArtistDetail {
         val pageSize = 400
-        val first = page(
-            "/track/artist-detail/list",
-            1,
-            pageSize,
-            ::parseTrack,
-            mapOf("artistGUID" to artistGuid)
-        )
+        val first = getArtistTracks(artistGuid, 1, pageSize)
         val tracks = first.list.toMutableList()
-        val pages = ((first.total + pageSize - 1) / pageSize).coerceAtMost(30)
-        for (page in 2..pages) {
-            tracks += page(
-                "/track/artist-detail/list",
-                page,
-                pageSize,
-                ::parseTrack,
-                mapOf("artistGUID" to artistGuid)
-            ).list
+        val pages = ((first.total + pageSize - 1) / pageSize).coerceIn(1, 30)
+        for (pageNumber in 2..pages) {
+            tracks += getArtistTracks(artistGuid, pageNumber, pageSize).list
         }
-        return tracks
+        val albums = tracks
             .mapNotNull { it.album }
             .groupBy { it.guid }
             .map { (_, values) ->
@@ -104,11 +104,21 @@ class FnosClient(private var session: MusicSession) {
                     guid = firstAlbum.guid,
                     name = firstAlbum.name,
                     coverId = firstAlbum.coverId,
-                    trackCount = values.size
+                    trackCount = values.size,
+                    artists = tracks
+                        .asSequence()
+                        .filter { it.album?.guid == firstAlbum.guid }
+                        .flatMap { it.artists.asSequence() }
+                        .distinctBy { it.guid }
+                        .toList()
                 )
             }
             .sortedBy { it.name.lowercase() }
+        return ArtistDetail(tracks = tracks, albums = albums)
     }
+
+    fun getArtistAlbums(artistGuid: String): List<Album> =
+        getArtistDetail(artistGuid).albums
 
     fun searchTracks(query: String, page: Int = 1, size: Int = 100): Page<Track> {
         val q = query.trim()
@@ -560,3 +570,5 @@ private fun BufferedInputStream.readBytesLimited(maxBytes: Int): ByteArray {
     }
     return output.toByteArray()
 }
+
+// XT_ANDROID_ARTIST_TABS_QUEUE_20260901
