@@ -1,4 +1,5 @@
 import {
+  artistLinksHtml,
   artistsText,
   attr,
   coverUrl,
@@ -267,36 +268,82 @@ export function gridPageView({
   `;
 }
 
-export function artistAlbumsView({ item, albums, pagination = null }) {
+export function artistAlbumsView({
+  item,
+  tracks = [],
+  albums = [],
+  pagination = null,
+  activeTab = 'tracks'
+}) {
   const title = item?.name || item?.title || '未知歌手';
-  const total = Number(pagination?.total || albums?.length || item?.albumCount || 0);
-  const coverId = item?.coverId || albums?.find((album) => album?.coverId)?.coverId;
-  const trackCount = Number(item?.trackCount || 0);
+  const albumTotal = Number(pagination?.total || albums?.length || item?.albumCount || 0);
+  const trackTotal = Math.max(Number(item?.trackCount || 0), tracks.length);
+  const representativeTrack = tracks.find((track) => track?.coverId || track?.album?.coverId);
+  const coverId = item?.coverId || representativeTrack?.coverId ||
+    representativeTrack?.album?.coverId || albums.find((album) => album?.coverId)?.coverId;
+  const selected = activeTab === 'albums' ? 'albums' : 'tracks';
+
   return `
-    <div class="page detail-page artist-albums-page">
+    <div class="page detail-page artist-albums-page" data-artist-active-tab="${selected}">
       <section class="detail-hero artist-albums-hero">
         <div class="detail-backdrop" style="${coverId ? `background-image:url('${attr(coverUrl(coverId, 800))}')` : ''}"></div>
         <div class="detail-hero-content">
-          ${imageHtml(item?.coverId, title, 'detail-cover round', 900)}
+          ${imageHtml(coverId, title, 'detail-cover round', 900)}
           <div class="detail-copy">
             <p class="eyebrow">歌手</p>
             <h1>${escapeHtml(title)}</h1>
-            <p class="detail-meta">${total} 张专辑${trackCount ? ` · ${trackCount} 首歌曲` : ''}</p>
+            <p class="detail-meta">${albumTotal} 张专辑 · ${trackTotal} 首歌曲</p>
             <div class="detail-actions">
-              <button class="secondary-button" data-action="refresh">${icon('refresh', 16)}刷新专辑</button>
+              ${tracks.length ? `
+                <button class="primary-button" data-action="play-all">${icon('play', 17)}播放全部歌曲</button>
+                <button class="secondary-button" data-action="shuffle-all">${icon('shuffle', 17)}随机播放</button>
+              ` : ''}
+              <button class="secondary-button" data-action="refresh">${icon('refresh', 16)}刷新</button>
             </div>
           </div>
         </div>
       </section>
-      <section class="artist-albums-section">
-        <div class="section-title-row">
-          <div><h2>专辑</h2><span>${total} 张</span></div>
-        </div>
-        <div class="media-grid artist-album-grid">
-          ${(albums || []).map((album) => mediaCard(album, 'album')).join('') || emptyState('album', '这个歌手暂时没有可浏览的专辑')}
-        </div>
-        ${paginationView(pagination)}
-      </section>
+
+      <nav class="artist-detail-tabs" role="tablist" aria-label="歌手内容">
+        <button class="artist-detail-tab ${selected === 'tracks' ? 'is-active' : ''}"
+                type="button"
+                role="tab"
+                aria-selected="${selected === 'tracks'}"
+                data-action="artist-tab"
+                data-artist-tab="tracks">
+          ${icon('music', 16)}<span>歌曲</span><small>${trackTotal}</small>
+        </button>
+        <button class="artist-detail-tab ${selected === 'albums' ? 'is-active' : ''}"
+                type="button"
+                role="tab"
+                aria-selected="${selected === 'albums'}"
+                data-action="artist-tab"
+                data-artist-tab="albums">
+          ${icon('album', 16)}<span>专辑</span><small>${albumTotal}</small>
+        </button>
+      </nav>
+
+      ${selected === 'tracks' ? `
+        <section class="artist-tracks-section" role="tabpanel">
+          <div class="section-title-row artist-tab-heading">
+            <div><h2>歌曲</h2><span>${trackTotal} 首</span></div>
+            ${tracks.length ? `<button class="primary-button compact" data-action="play-all">${icon('play', 16)}播放列表歌曲</button>` : ''}
+          </div>
+          ${tracks.length
+            ? '<div id="track-table-host" class="track-table-host detail-table artist-track-table"></div>'
+            : emptyState('music', '这个歌手暂时没有可播放的歌曲')}
+        </section>
+      ` : `
+        <section class="artist-albums-section" role="tabpanel">
+          <div class="section-title-row">
+            <div><h2>专辑</h2><span>${albumTotal} 张</span></div>
+          </div>
+          <div class="media-grid artist-album-grid">
+            ${(albums || []).map((album) => mediaCard(album, 'album')).join('') || emptyState('album', '这个歌手暂时没有可浏览的专辑')}
+          </div>
+          ${paginationView(pagination)}
+        </section>
+      `}
     </div>
   `;
 }
@@ -335,6 +382,9 @@ export function detailView({ kind, item, tracks, pagination = null }) {
   const title = item.name || item.title || '未知';
   const coverId = item.coverId || tracks?.[0]?.coverId || tracks?.[0]?.album?.coverId;
   const meta = detailMeta(kind, item, tracks);
+  const artistMarkup = kind === 'album' && tracks?.[0]
+    ? artistLinksHtml(tracks[0], { className: 'detail-artist-links' })
+    : '';
   return `
     <div class="page detail-page">
       <section class="detail-hero">
@@ -344,6 +394,7 @@ export function detailView({ kind, item, tracks, pagination = null }) {
           <div class="detail-copy">
             <p class="eyebrow">${detailKindLabel(kind)}</p>
             <h1>${escapeHtml(title)}</h1>
+            ${artistMarkup ? `<div class="detail-artist-row">${artistMarkup}</div>` : ''}
             <p class="detail-meta">${escapeHtml(meta)}</p>
             <div class="detail-actions">
               <button class="primary-button" data-action="play-all">${icon('play', 17)}播放</button>
@@ -405,7 +456,7 @@ export function lyricsView(playerState) {
           ${imageHtml(coverId, track.title, 'lyrics-cover', 1000)}
           <div class="lyrics-track-copy">
             <h1>${escapeHtml(track.title)}</h1>
-            <p>${escapeHtml(artistsText(track))}</p>
+            <div class="lyrics-artist-row">${artistLinksHtml(track, { className: 'lyrics-artist-links' })}</div>
             ${track.album?.guid ? `
               <button class="lyrics-album-link entity-link"
                       type="button"
@@ -606,7 +657,7 @@ function mediaCard(item, kind) {
           <button class="card-play" data-play-guid="${attr(item.guid)}" aria-label="播放">${icon('play', 20)}</button>
         </div>
         <strong title="${attr(item.title)}">${escapeHtml(item.title || '未知标题')}</strong>
-        <span title="${attr(artistsText(item))}">${escapeHtml(artistsText(item))}</span>
+        <div class="media-card-artist" title="${attr(artistsText(item))}">${artistLinksHtml(item, { className: 'card-artist-links' })}</div>
       </article>
     `;
   }
@@ -657,10 +708,7 @@ function detailKindLabel(kind) {
 
 function detailMeta(kind, item, tracks) {
   if (kind === 'artist') return `${tracks.length} 首歌曲 · ${item.albumCount || 0} 张专辑`;
-  if (kind === 'album') {
-    const artists = tracks[0] ? artistsText(tracks[0]) : '';
-    return `${artists}${artists ? ' · ' : ''}${tracks.length} 首歌曲`;
-  }
+  if (kind === 'album') return `${tracks.length} 首歌曲`;
   return `${tracks.length} 首歌曲`;
 }
 
@@ -679,3 +727,5 @@ function hourGreeting() {
   if (hour < 18) return '下午好';
   return '晚上好';
 }
+
+// XT_ARTIST_NAVIGATION_TABS_20260901

@@ -1,5 +1,6 @@
 import {
   albumText,
+  artistLinksHtml,
   artistsText,
   attr,
   escapeHtml,
@@ -147,7 +148,7 @@ export class VirtualTrackTable {
           ${imageHtml(coverId, track.title, 'track-row-cover', 128)}
           <div class="track-row-title-wrap">
             <div class="track-row-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title || '未知标题')}</div>
-            <div class="track-row-subtitle" title="${escapeHtml(artists)}">${escapeHtml(artists)}</div>
+            <div class="track-row-subtitle" title="${escapeHtml(artists)}">${artistLinksHtml(track, { className: 'track-artist-links' })}</div>
           </div>
         </div>
         <div class="track-col-album" title="${escapeHtml(albumName)}">${albumMarkup}</div>
@@ -193,3 +194,5 @@ export class VirtualTrackTable {
     this.host.innerHTML = '';
   }
 }
+
+// XT_ARTIST_NAVIGATION_TABS_20260901

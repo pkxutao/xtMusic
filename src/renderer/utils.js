@@ -98,6 +98,39 @@ export function artistsText(track) {
   return artists.map((item) => item?.name).filter(Boolean).join('、') || '未知歌手';
 }
 
+// XT_ARTIST_NAVIGATION_TABS_20260901: render safe, delegated artist links.
+export function artistLinksHtml(track, {
+  className = 'artist-links',
+  fallback = '未知歌手',
+  separator = '、'
+} = {}) {
+  const artists = (Array.isArray(track?.artists) ? track.artists : [])
+    .map((item) => ({
+      guid: String(item?.guid || item?.artistGUID || item?.artistGuid || '').trim(),
+      name: String(item?.name || '').trim(),
+      coverId: item?.coverId || null
+    }))
+    .filter((item) => item.name);
+
+  if (!artists.length) {
+    return `<span class="${attr(className)} artist-link-fallback">${escapeHtml(fallback)}</span>`;
+  }
+
+  const separatorMarkup = `<span class="artist-link-separator">${escapeHtml(separator)}</span>`;
+  const links = artists.map((artist) => {
+    if (!artist.guid) return `<span class="artist-link-fallback">${escapeHtml(artist.name)}</span>`;
+    return `<button class="entity-link artist-link"
+                    type="button"
+                    data-open-kind="artist"
+                    data-open-id="${attr(artist.guid)}"
+                    data-open-name="${attr(artist.name)}"
+                    data-open-cover-id="${attr(artist.coverId || '')}"
+                    title="打开歌手 ${attr(artist.name)}">${escapeHtml(artist.name)}</button>`;
+  });
+
+  return `<span class="${attr(className)}">${links.join(separatorMarkup)}</span>`;
+}
+
 export function albumText(track) {
   return track?.album?.name || '未知专辑';
 }

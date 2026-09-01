@@ -20,6 +20,7 @@ import {
   trackPageView
 } from './views.js';
 import {
+  artistLinksHtml,
   artistsText,
   attr,
   configureMediaBaseUrl,
@@ -50,6 +51,7 @@ class XtMusicApp {
     this.currentTracks = [];
     this.currentItems = [];
     this.currentDetail = null;
+    this.currentArtistData = null;
     this.currentTable = null;
     this.contextTrack = null;
     this.pendingPlaylistTracks = [];
@@ -148,18 +150,21 @@ class XtMusicApp {
     // XT_LYRICS_ALBUM_CAPTURE_0_3_7: lyrics enhancements can install their own delegated handlers.
     // Capture this navigation at Window before any page-level handler can consume it.
     window.addEventListener('click', (event) => {
-      const target = event.target.closest?.('.lyrics-album-link[data-open-id]');
+      const target = event.target.closest?.(
+        '.lyrics-album-link[data-open-id], .lyrics-artist-links [data-open-kind="artist"][data-open-id]'
+      );
       if (!target) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       const guid = String(target.dataset.openId || '').trim();
       if (!guid) return;
+      const kind = target.dataset.openKind === 'artist' ? 'artist' : 'album';
       const item = {
         guid,
-        name: target.dataset.openName || target.textContent?.trim() || '未知专辑',
+        name: target.dataset.openName || target.textContent?.trim() || detailFallback(kind),
         coverId: target.dataset.openCoverId || null
       };
-      this.#navigate('album', { guid, item });
+      this.#navigate(kind, { guid, item });
     }, true);
     document.addEventListener('click', (event) => this.#handleClick(event));
     document.addEventListener('submit', (event) => this.#handleSubmit(event));
@@ -231,6 +236,19 @@ class XtMusicApp {
     });
     this.els.playerLyrics.addEventListener('click', openNowPlaying);
     this.els.playerTitle.addEventListener('click', openNowPlaying);
+    // XT_ARTIST_NAVIGATION_TABS_20260901: bottom-player artist navigation.
+    this.els.playerArtist.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const guid = String(this.els.playerArtist.dataset.openId || '').trim();
+      if (!guid) return;
+      const item = {
+        guid,
+        name: this.els.playerArtist.dataset.openName || this.els.playerArtist.textContent || '未知歌手',
+        coverId: this.els.playerArtist.dataset.openCoverId || null
+      };
+      this.#navigate('artist', { guid, item });
+    });
     // XT_BOTTOM_PLAYER_ALBUM_CLICK_0_3_7: keep this control independent from the now-playing title action.
     this.els.playerAlbum.addEventListener('click', (event) => {
       event.preventDefault();
@@ -381,6 +399,7 @@ class XtMusicApp {
     this.currentTracks = [];
     this.currentItems = [];
     this.currentDetail = null;
+    this.currentArtistData = null;
 
     if (route.name === 'lyrics') {
       this.#renderLyricsPage();
@@ -502,13 +521,20 @@ class XtMusicApp {
       guid: params.guid,
       name: params.name || detailFallback('artist')
     };
-    const result = await api.music('getArtistAlbums', {
-      artistGUID: params.guid,
-      page,
-      size: GRID_PAGE_SIZE
-    });
-    const paged = normalizePageResult(result, page, GRID_PAGE_SIZE);
-    return { item, albums: paged.list, pagination: paged.pagination };
+    const tracks = await this.#fetchAll(
+      'getArtistTracks',
+      { artistGUID: params.guid },
+      DETAIL_TRACK_PAGE_SIZE,
+      12000
+    );
+    const allAlbums = artistAlbumsFromTracks(tracks);
+    const paged = paginateItems(allAlbums, page, GRID_PAGE_SIZE);
+    return {
+      item,
+      tracks,
+      albums: paged.list,
+      pagination: paged.pagination
+    };
   }
 
   async #fetchAll(method, args = {}, pageSize = 500, hardLimit = 30000) {
@@ -604,13 +630,7 @@ class XtMusicApp {
         this.#mountTrackTable(this.currentTracks);
         break;
       case 'artist':
-        this.currentDetail = { kind: 'artist', item: data.item };
-        this.currentItems = data.albums;
-        this.els.content.innerHTML = artistAlbumsView({
-          item: data.item,
-          albums: data.albums,
-          pagination: data.pagination
-        });
+        this.#renderArtistDetail(data, route.params?.tab || 'tracks');
         break;
       case 'album':
       case 'genre':
@@ -628,6 +648,23 @@ class XtMusicApp {
       default:
         this.els.content.innerHTML = homeView(data, this.store.get().session);
     }
+    this.els.content.scrollTop = 0;
+  }
+
+  #renderArtistDetail(data, activeTab = 'tracks') {
+    const selected = activeTab === 'albums' ? 'albums' : 'tracks';
+    this.currentDetail = { kind: 'artist', item: data.item };
+    this.currentArtistData = data;
+    this.currentTracks = data.tracks || [];
+    this.currentItems = data.albums || [];
+    this.els.content.innerHTML = artistAlbumsView({
+      item: data.item,
+      tracks: this.currentTracks,
+      albums: this.currentItems,
+      pagination: data.pagination,
+      activeTab: selected
+    });
+    if (selected === 'tracks') this.#mountTrackTable(this.currentTracks);
     this.els.content.scrollTop = 0;
   }
 
@@ -746,6 +783,17 @@ class XtMusicApp {
       case 'toggle-password': {
         const input = document.querySelector('#login-password');
         if (input) input.type = input.type === 'password' ? 'text' : 'password';
+        break;
+      }
+      case 'artist-tab': {
+        const selected = target.dataset.artistTab === 'albums' ? 'albums' : 'tracks';
+        const current = this.store.get().route;
+        if (current.name !== 'artist' || !this.currentArtistData) break;
+        this.store.navigate('artist', { ...current.params, tab: selected }, { replace: true });
+        this.#renderChrome();
+        this.currentTable?.destroy();
+        this.currentTable = null;
+        this.#renderArtistDetail(this.currentArtistData, selected);
         break;
       }
       case 'play-all':
@@ -1039,7 +1087,25 @@ class XtMusicApp {
     this.els.playerTitle.textContent = track?.title || '选择一首歌曲';
     this.els.playerTitle.disabled = !track;
     this.els.playerTitle.title = track ? '打开正在播放和歌词' : '';
-    this.els.playerArtist.textContent = track ? artistsText(track) : 'XT Music';
+    const playerArtist = (Array.isArray(track?.artists) ? track.artists : [])
+      .find((item) => String(item?.guid || item?.artistGUID || item?.artistGuid || '').trim() && String(item?.name || '').trim());
+    const playerArtistGuid = String(playerArtist?.guid || playerArtist?.artistGUID || playerArtist?.artistGuid || '').trim();
+    const playerArtistName = track ? artistsText(track) : 'XT Music';
+    this.els.playerArtist.textContent = playerArtistName;
+    this.els.playerArtist.disabled = !playerArtistGuid;
+    this.els.playerArtist.classList.toggle('is-clickable', Boolean(playerArtistGuid));
+    this.els.playerArtist.title = playerArtistGuid ? `打开歌手 ${playerArtist?.name || playerArtistName}` : '';
+    if (playerArtistGuid) {
+      this.els.playerArtist.dataset.openKind = 'artist';
+      this.els.playerArtist.dataset.openId = playerArtistGuid;
+      this.els.playerArtist.dataset.openName = playerArtist?.name || playerArtistName;
+      this.els.playerArtist.dataset.openCoverId = playerArtist?.coverId || '';
+    } else {
+      delete this.els.playerArtist.dataset.openKind;
+      delete this.els.playerArtist.dataset.openId;
+      delete this.els.playerArtist.dataset.openName;
+      delete this.els.playerArtist.dataset.openCoverId;
+    }
     const playerAlbum = track?.album || null;
     const playerAlbumGuid = String(playerAlbum?.guid || track?.albumGUID || track?.albumGuid || '').trim();
     const playerAlbumName = track ? (playerAlbum?.name || '未知专辑') : '未知专辑';
@@ -1124,7 +1190,7 @@ class XtMusicApp {
                 ${imageHtml(coverId, track.title, 'queue-row-cover', 128)}
                 <div class="queue-row-copy">
                   <div class="queue-row-title">${escapeHtml(track.title || '未知标题')}</div>
-                  <div class="queue-row-artist">${escapeHtml(artistsText(track))}</div>
+                  <div class="queue-row-artist">${artistLinksHtml(track, { className: 'queue-artist-links' })}</div>
                 </div>
                 <button class="icon-button subtle" data-action="remove-queue" data-index="${index}" aria-label="移除">${icon('close', 15)}</button>
               </div>
@@ -1426,6 +1492,63 @@ function normalizePageResult(result, requestedPage, pageSize) {
   };
 }
 
+function artistAlbumsFromTracks(tracks) {
+  const albums = new Map();
+  for (const track of tracks || []) {
+    const source = track?.album || {};
+    const guid = String(source.guid || track?.albumGUID || track?.albumGuid || '').trim();
+    if (!guid) continue;
+    let album = albums.get(guid);
+    if (!album) {
+      album = {
+        guid,
+        name: String(source.name || track?.albumName || '未知专辑'),
+        coverId: source.coverId || track?.coverId || null,
+        releaseDate: source.releaseDate ?? null,
+        createdAt: source.createdAt ?? null,
+        trackCount: 0
+      };
+      albums.set(guid, album);
+    }
+    album.trackCount += 1;
+    const serverCount = Number(source.trackCount || 0);
+    if (Number.isFinite(serverCount) && serverCount > album.trackCount) album.trackCount = serverCount;
+    if (!album.coverId && (source.coverId || track?.coverId)) album.coverId = source.coverId || track.coverId;
+    if ((!album.name || album.name === '未知专辑') && source.name) album.name = source.name;
+    if (album.releaseDate == null && source.releaseDate != null) album.releaseDate = source.releaseDate;
+    if (album.createdAt == null && source.createdAt != null) album.createdAt = source.createdAt;
+  }
+  return [...albums.values()].sort((left, right) => {
+    const leftDate = Number(left.releaseDate || left.createdAt || 0);
+    const rightDate = Number(right.releaseDate || right.createdAt || 0);
+    if (leftDate !== rightDate) return rightDate - leftDate;
+    return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN', {
+      numeric: true,
+      sensitivity: 'base'
+    });
+  });
+}
+
+function paginateItems(items, requestedPage, pageSize) {
+  const list = Array.isArray(items) ? items : [];
+  const total = list.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(normalizePage(requestedPage), pages);
+  const startIndex = (page - 1) * pageSize;
+  const pageItems = list.slice(startIndex, startIndex + pageSize);
+  return {
+    list: pageItems,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      pages,
+      start: total ? startIndex + 1 : 0,
+      end: total ? startIndex + pageItems.length : 0
+    }
+  };
+}
+
 function pageSummary(pagination, unit) {
   const page = pagination || {};
   if (!page.total) return `0 ${unit}`;
@@ -1439,7 +1562,7 @@ function routeKey(route) {
 function stripObjects(params) {
   const result = {};
   for (const [key, value] of Object.entries(params)) {
-    if (key === 'item') continue;
+    if (key === 'item' || key === 'tab') continue;
     result[key] = value;
   }
   return result;
@@ -1470,7 +1593,7 @@ function routeLoadingLabel(name) {
     search: '正在搜索音乐库…',
     playlist: '正在打开歌单…',
     album: '正在打开专辑…',
-    artist: '正在加载歌手专辑…',
+    artist: '正在加载歌手歌曲与专辑…',
     genre: '正在打开风格…'
   })[name] || '正在加载音乐库…';
 }
@@ -1486,3 +1609,5 @@ function isElementCentered(element) {
 
 const app = new XtMusicApp();
 app.init();
+
+// XT_ARTIST_NAVIGATION_TABS_20260901

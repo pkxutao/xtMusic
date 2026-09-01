@@ -2777,3 +2777,155 @@ select:focus-visible,
   font-size: 11px;
 }
 
+
+
+/* XT_ARTIST_NAVIGATION_TABS_20260901: clickable artists and songs/albums artist tabs */
+.artist-links {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 100%;
+}
+.artist-link,
+.artist-link-fallback,
+.artist-link-separator {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.artist-link {
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artist-link-separator {
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+.track-artist-links,
+.queue-artist-links,
+.card-artist-links,
+.lyrics-artist-links,
+.detail-artist-links {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.track-artist-links .artist-link,
+.queue-artist-links .artist-link {
+  color: inherit;
+}
+.media-card-artist {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-artist-links {
+  width: 100%;
+}
+.detail-artist-row {
+  display: flex;
+  max-width: 850px;
+  margin-top: 9px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.detail-artist-links .artist-link:hover {
+  color: var(--accent-strong);
+}
+.lyrics-artist-row {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+}
+.lyrics-artist-links {
+  width: 100%;
+}
+.lyrics-artist-links .artist-link:hover {
+  color: var(--text);
+}
+.now-playing-artist {
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.now-playing-artist:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+.now-playing-artist.is-clickable:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+}
+.artist-detail-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 22px clamp(28px, 4vw, 58px) 0;
+  border-bottom: 1px solid var(--border);
+}
+.artist-detail-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 126px;
+  min-height: 44px;
+  padding: 0 16px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 11px 11px 0 0;
+}
+.artist-detail-tab:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+.artist-detail-tab.is-active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-soft));
+}
+.artist-detail-tab.is-active::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  bottom: -1px;
+  left: 12px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 999px;
+}
+.artist-detail-tab small {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.artist-detail-tab.is-active .icon {
+  color: var(--accent-strong);
+}
+.artist-tracks-section {
+  padding: 30px clamp(28px, 4vw, 58px) 54px;
+}
+.artist-tab-heading {
+  min-height: 36px;
+}
+.artist-track-table {
+  height: min(680px, calc(100vh - var(--player-height) - 215px));
+}
+@media (max-width: 860px) {
+  .artist-detail-tabs,
+  .artist-tracks-section {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+  .artist-detail-tab {
+    min-width: 112px;
+    padding: 0 12px;
+  }
+}
