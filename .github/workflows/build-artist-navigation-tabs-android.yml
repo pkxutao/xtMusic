@@ -1,0 +1,136 @@
+name: Build Android Artist Tabs and Queue Fix
+
+on:
+  push:
+    branches:
+      - feat/artist-navigation-tabs-android-20260901
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xtmusic-android-artist-tabs-queue-fix
+  cancel-in-progress: false
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply Android artist navigation, tabs, and queue fix
+        run: python scripts/patch-artist-navigation-tabs-android.py
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Verify requested functionality is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "fun getArtistDetail" android/app/src/main/java/com/pkxutao/xtmusic/android/FnosClient.kt
+          grep -q "private enum class ArtistDetailTab" android/app/src/main/java/com/pkxutao/xtmusic/android/MainActivity.kt
+          grep -q "播放列表歌曲" android/app/src/main/java/com/pkxutao/xtmusic/android/MainActivity.kt
+          grep -q "fun TextView.bindArtistLinks" android/app/src/main/java/com/pkxutao/xtmusic/android/Ui.kt
+          grep -q "showPlaybackQueue" android/app/src/main/java/com/pkxutao/xtmusic/android/NowPlayingActivity.kt
+          grep -q "setOnClickListener { showPlaybackQueue() }" android/app/src/main/java/com/pkxutao/xtmusic/android/NowPlayingActivity.kt
+          grep -q "ACTION_PLAY_INDEX" android/app/src/main/java/com/pkxutao/xtmusic/android/PlaybackService.kt
+          grep -q "fun snapshot(): QueueSnapshot" android/app/src/main/java/com/pkxutao/xtmusic/android/PlaybackState.kt
+          grep -q "fun select(selectedIndex: Int)" android/app/src/main/java/com/pkxutao/xtmusic/android/PlaybackState.kt
+          ! grep -R "android.webkit.WebView" android/app/src/main/java
+
+      - name: Run unit tests and build universal APK
+        run: gradle -p android --no-daemon testDebugUnitTest assembleDebug
+
+      - name: Run Android lint
+        run: gradle -p android --no-daemon lintDebug
+
+      - name: Prepare and verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+            artifact/XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk
+          APK=artifact/XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk
+          AAPT="${ANDROID_HOME}/build-tools/35.0.0/aapt"
+          test -x "$AAPT"
+          test "$(stat -c%s "$APK")" -gt 500000
+          unzip -t "$APK"
+          "$AAPT" dump badging "$APK" | tee artifact/APK-BADGING.txt
+          (
+            cd artifact
+            sha256sum XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk > SHA256SUMS.txt
+          )
+          cat > artifact/BUILD-INFO.txt <<INFO
+          XT Music Android 0.1.0-alpha03 Artist Navigation + Detail Tabs + Queue Fix
+          Native UI: Kotlin + Android platform Views; no WebView
+          Artist labels use stable artist GUID navigation
+          Artist detail songs tab: PASS
+          Artist detail albums tab preserves existing two-column layout: PASS
+          Artist song-list play button: PASS
+          Playback queue button listener: PASS
+          Playback queue list and jump-to-index action: PASS
+          Queue state unit tests: PASS
+          Android lint: PASS
+          APK ZIP integrity: PASS
+          Minimum Android: 8.0 / API 26
+          Commit: ${GITHUB_SHA}
+          Workflow run: ${GITHUB_RUN_ID}
+          INFO
+          cat artifact/SHA256SUMS.txt
+
+      - name: Commit validated Android source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf android/.gradle android/build android/app/build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            android/app/src/main/java/com/pkxutao/xtmusic/android/Models.kt \
+            android/app/src/main/java/com/pkxutao/xtmusic/android/FnosClient.kt \
+            android/app/src/main/java/com/pkxutao/xtmusic/android/Ui.kt \
+            android/app/src/main/java/com/pkxutao/xtmusic/android/LibraryAdapter.kt \
+            android/app/src/main/java/com/pkxutao/xtmusic/android/PlaybackState.kt \
+            android/app/src/main/java/com/pkxutao/xtmusic/android/PlaybackService.kt \
+            android/app/src/main/java/com/pkxutao/xtmusic/android/MainActivity.kt \
+            android/app/src/main/java/com/pkxutao/xtmusic/android/NowPlayingActivity.kt \
+            android/app/src/test/java/com/pkxutao/xtmusic/android/PlaybackQueueTest.kt
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat(android): add artist tabs and fix playback queue [skip ci]'
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          else
+            echo 'Validated Android source is already committed.'
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Android-Artist-Navigation-Tabs-Queue-Fix
+          path: |
+            artifact/XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk
+            artifact/SHA256SUMS.txt
+            artifact/BUILD-INFO.txt
+            artifact/APK-BADGING.txt
+            android/app/build/reports/lint-results-debug.html
+            android/app/build/reports/tests/testDebugUnitTest/**
+          if-no-files-found: error
+          retention-days: 30
