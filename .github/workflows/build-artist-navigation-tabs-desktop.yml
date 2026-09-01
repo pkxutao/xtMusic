@@ -1,0 +1,123 @@
+name: Build Desktop Artist Navigation Tabs
+
+on:
+  push:
+    branches:
+      - feat/artist-navigation-tabs-desktop-20260901
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xtmusic-desktop-artist-navigation-tabs
+  cancel-in-progress: false
+
+jobs:
+  build-test-package:
+    runs-on: windows-latest
+    timeout-minutes: 55
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply artist navigation and detail tabs
+        shell: pwsh
+        run: python scripts/patch-artist-navigation-tabs-desktop.py
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run application and regression tests
+        run: npm run build
+
+      - name: Verify renderer assets
+        run: node scripts/verify-renderer-assets.js
+
+      - name: Preserve large-library responsiveness
+        run: npx electron scripts/windows-large-library-smoke.js
+
+      - name: Preserve now-playing and lyrics behavior
+        run: npx electron scripts/windows-now-playing-smoke.js
+
+      - name: Verify artist links, tabs, album layout, and list playback
+        run: npx electron scripts/windows-artist-navigation-tabs-smoke.js
+
+      - name: Build Windows installer and portable package
+        run: npm run dist:win
+
+      - name: Rename packages and generate verification files
+        shell: pwsh
+        run: |
+          $installerSource = Get-Item 'release/XT-Music-0.3.7-x64.exe'
+          $portableSource = Get-Item 'release/XT-Music-Portable-0.3.7-x64.exe'
+          if ($installerSource.Length -lt 50000000) { throw "Installer is unexpectedly small: $($installerSource.Length)" }
+          if ($portableSource.Length -lt 50000000) { throw "Portable package is unexpectedly small: $($portableSource.Length)" }
+
+          $installer = 'release/XT-Music-0.3.7-Artist-Navigation-Tabs-x64.exe'
+          $portable = 'release/XT-Music-Portable-0.3.7-Artist-Navigation-Tabs-x64.exe'
+          Copy-Item $installerSource.FullName $installer -Force
+          Copy-Item $portableSource.FullName $portable -Force
+
+          Get-FileHash $installer, $portable -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
+            Set-Content 'release/SHA256SUMS-Windows-Artist-Navigation-Tabs.txt'
+
+          @(
+            'XT Music 0.3.7 Artist Navigation + Artist Detail Tabs verification',
+            'track-list artist names open artist detail: PASS',
+            'home-card artist names open artist detail: PASS',
+            'bottom-player artist opens artist detail: PASS',
+            'now-playing/lyrics artist opens artist detail: PASS',
+            'play-queue artist opens artist detail: PASS',
+            'artist detail songs tab: PASS',
+            'artist detail albums tab preserves album-card grid: PASS',
+            'artist song-list play button starts the full artist list: PASS',
+            'album navigation regression: PASS',
+            'large-library responsiveness regression: PASS',
+            'now-playing and lyrics regression: PASS',
+            'Windows installer and portable build: PASS',
+            "Commit: $env:GITHUB_SHA",
+            "Workflow run: $env:GITHUB_RUN_ID"
+          ) | Set-Content 'release/ARTIST-NAVIGATION-TABS-VERIFICATION.txt'
+
+          Get-Content 'release/SHA256SUMS-Windows-Artist-Navigation-Tabs.txt'
+          Get-Content 'ui-proof/windows-artist-navigation-tabs.json'
+
+      - name: Commit validated source changes
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json `
+            src/renderer/utils.js src/renderer/virtual-table.js src/renderer/views.js `
+            src/renderer/index.html src/renderer/app.js src/renderer/styles.css `
+            tests/artist-navigation-tabs.test.js
+          if (-not (git diff --cached --quiet)) {
+            git commit -m 'feat: add artist navigation and songs-albums tabs [skip ci]'
+            git push origin "HEAD:$env:GITHUB_REF_NAME"
+          } else {
+            Write-Host 'Validated source is already committed.'
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Windows-Artist-Navigation-Tabs-0.3.7
+          path: |
+            release/XT-Music-0.3.7-Artist-Navigation-Tabs-x64.exe
+            release/XT-Music-Portable-0.3.7-Artist-Navigation-Tabs-x64.exe
+            release/SHA256SUMS-Windows-Artist-Navigation-Tabs.txt
+            release/ARTIST-NAVIGATION-TABS-VERIFICATION.txt
+            ui-proof/windows-artist-navigation-tabs.json
+            ui-proof/windows-artist-songs-tab.png
+            ui-proof/windows-artist-albums-tab.png
+            ui-proof/windows-large-library-smoke.json
+            ui-proof/windows-now-playing-smoke.json
+          if-no-files-found: error
+          retention-days: 30
