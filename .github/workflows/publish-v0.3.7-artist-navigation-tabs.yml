@@ -1,0 +1,189 @@
+name: Publish v0.3.7 Artist Navigation Tabs
+
+on:
+  push:
+    branches:
+      - release/v0.3.7-artist-navigation-tabs-20260902
+    paths:
+      - ".github/workflows/publish-v0.3.7-artist-navigation-tabs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-v0.3.7-artist-navigation-tabs
+  cancel-in-progress: false
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.3.7
+      DESKTOP_RUN_ID: "33462752343"
+      ANDROID_RUN_ID: "33463179485"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download validated desktop and Android artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p incoming/desktop incoming/android
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh run download "$DESKTOP_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "XT-Music-Windows-Artist-Navigation-Tabs-0.3.7" \
+            --dir incoming/desktop
+          gh run download "$ANDROID_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "XT-Music-Android-Artist-Navigation-Tabs-Queue-Fix" \
+            --dir incoming/android
+          find incoming -maxdepth 4 -type f -print | sort
+
+      - name: Prepare release files and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          install -m 0644 \
+            incoming/desktop/release/XT-Music-0.3.7-Artist-Navigation-Tabs-x64.exe \
+            release-assets/XT-Music-0.3.7-Artist-Navigation-Tabs-x64.exe
+          install -m 0644 \
+            incoming/desktop/release/XT-Music-Portable-0.3.7-Artist-Navigation-Tabs-x64.exe \
+            release-assets/XT-Music-Portable-0.3.7-Artist-Navigation-Tabs-x64.exe
+          install -m 0644 \
+            incoming/android/artifact/XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk \
+            release-assets/XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk
+
+          install -m 0644 \
+            incoming/desktop/release/ARTIST-NAVIGATION-TABS-VERIFICATION.txt \
+            release-assets/WINDOWS-ARTIST-NAVIGATION-TABS-VERIFICATION.txt
+          install -m 0644 \
+            incoming/android/artifact/BUILD-INFO.txt \
+            release-assets/ANDROID-ARTIST-NAVIGATION-TABS-BUILD-INFO.txt
+          install -m 0644 \
+            incoming/android/artifact/APK-BADGING.txt \
+            release-assets/ANDROID-ARTIST-NAVIGATION-TABS-APK-BADGING.txt
+
+          test "$(stat -c%s release-assets/XT-Music-0.3.7-Artist-Navigation-Tabs-x64.exe)" -gt 50000000
+          test "$(stat -c%s release-assets/XT-Music-Portable-0.3.7-Artist-Navigation-Tabs-x64.exe)" -gt 50000000
+          test "$(stat -c%s release-assets/XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk)" -gt 500000
+
+          cat > release-assets/RELEASE-NOTES-v0.3.7-Artist-Navigation-Tabs.md <<'NOTES'
+          # XT Music v0.3.7 · 歌手导航与双 Tab 更新
+
+          本次补充发布 Windows 桌面端和 Android 手机端安装包。
+
+          ## 功能更新
+
+          - 歌曲列表、搜索结果、专辑详情、正在播放和播放队列中的歌手名可点击，并按歌手 GUID 进入歌手页。
+          - 歌手页增加“歌曲 / 专辑”双 Tab；歌曲 Tab 支持播放全部、播放列表歌曲、随机播放及从指定歌曲开始播放。
+          - 专辑 Tab 保留原有专辑卡片布局和专辑详情跳转。
+          - Android 修复播放队列按钮点击无响应，可打开队列并点击任意歌曲跳播。
+          - Windows 与 Android 均包含本次歌手导航能力。
+
+          ## 安装包
+
+          - `XT-Music-0.3.7-Artist-Navigation-Tabs-x64.exe`：Windows x64 安装版。
+          - `XT-Music-Portable-0.3.7-Artist-Navigation-Tabs-x64.exe`：Windows x64 便携版。
+          - `XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk`：Android 8.0/API 26 及以上通用调试签名 APK。
+          - `XT-Music-v0.3.7-Artist-Navigation-Tabs-All-Platforms.zip`：以上安装包与验证资料的整包。
+
+          Android 当前为调试签名 APK。若设备上旧调试版的签名不同，需先卸载旧版本再安装。
+
+          ## 验证
+
+          - Windows：构建、单元测试、Electron 交互回归、大型曲库响应性和安装包完整性检查通过。
+          - Android：Kotlin 编译、单元测试、Android Lint、APK 构建与 ZIP 完整性检查通过。
+
+          ## 源码
+
+          - 桌面端：`feat/artist-navigation-tabs-desktop-20260901`，提交 `7eda863839b1f32300a91c653da14eface6f6899`。
+          - Android：`feat/artist-navigation-tabs-android-20260901`，提交 `20ecc7ad84ebfe347eb07876f6e54556bd05f594`。
+          NOTES
+
+          sed -i 's/^          //' release-assets/RELEASE-NOTES-v0.3.7-Artist-Navigation-Tabs.md
+
+          (
+            cd release-assets
+            zip -9 -j XT-Music-v0.3.7-Artist-Navigation-Tabs-All-Platforms.zip \
+              XT-Music-0.3.7-Artist-Navigation-Tabs-x64.exe \
+              XT-Music-Portable-0.3.7-Artist-Navigation-Tabs-x64.exe \
+              XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk \
+              WINDOWS-ARTIST-NAVIGATION-TABS-VERIFICATION.txt \
+              ANDROID-ARTIST-NAVIGATION-TABS-BUILD-INFO.txt \
+              ANDROID-ARTIST-NAVIGATION-TABS-APK-BADGING.txt \
+              RELEASE-NOTES-v0.3.7-Artist-Navigation-Tabs.md
+            unzip -t XT-Music-v0.3.7-Artist-Navigation-Tabs-All-Platforms.zip
+            sha256sum \
+              XT-Music-0.3.7-Artist-Navigation-Tabs-x64.exe \
+              XT-Music-Portable-0.3.7-Artist-Navigation-Tabs-x64.exe \
+              XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk \
+              XT-Music-v0.3.7-Artist-Navigation-Tabs-All-Platforms.zip \
+              > SHA256SUMS-v0.3.7-Artist-Navigation-Tabs.txt
+          )
+
+          cat release-assets/SHA256SUMS-v0.3.7-Artist-Navigation-Tabs.txt
+
+      - name: Append this update to the existing v0.3.7 release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker='<!-- artist-navigation-tabs-20260902 -->'
+          current_body="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""')"
+          if printf '%s' "$current_body" | grep -Fq "$marker"; then
+            echo "Release notes already contain this update."
+          else
+            {
+              printf '%s\n\n' "$current_body"
+              printf '%s\n' "$marker"
+              cat release-assets/RELEASE-NOTES-v0.3.7-Artist-Navigation-Tabs.md
+            } > combined-release-notes.md
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --notes-file combined-release-notes.md
+          fi
+
+      - name: Upload Windows and Android packages to GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            release-assets/XT-Music-0.3.7-Artist-Navigation-Tabs-x64.exe \
+            release-assets/XT-Music-Portable-0.3.7-Artist-Navigation-Tabs-x64.exe \
+            release-assets/XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk \
+            release-assets/XT-Music-v0.3.7-Artist-Navigation-Tabs-All-Platforms.zip \
+            release-assets/SHA256SUMS-v0.3.7-Artist-Navigation-Tabs.txt \
+            release-assets/WINDOWS-ARTIST-NAVIGATION-TABS-VERIFICATION.txt \
+            release-assets/ANDROID-ARTIST-NAVIGATION-TABS-BUILD-INFO.txt \
+            release-assets/ANDROID-ARTIST-NAVIGATION-TABS-APK-BADGING.txt \
+            release-assets/RELEASE-NOTES-v0.3.7-Artist-Navigation-Tabs.md \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Verify all published release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name)\t\(.size)"' | tee published-assets.txt
+
+          for name in \
+            XT-Music-0.3.7-Artist-Navigation-Tabs-x64.exe \
+            XT-Music-Portable-0.3.7-Artist-Navigation-Tabs-x64.exe \
+            XT-Music-Android-0.1.0-alpha03-Artist-Navigation-Tabs-Queue-Fix-universal-debug.apk \
+            XT-Music-v0.3.7-Artist-Navigation-Tabs-All-Platforms.zip \
+            SHA256SUMS-v0.3.7-Artist-Navigation-Tabs.txt; do
+            grep -Fq "$name" published-assets.txt || {
+              echo "Missing release asset: $name" >&2
+              exit 1
+            }
+          done
+
+          echo "Windows installer, portable package, Android APK and all-platform bundle are published to $RELEASE_TAG."
