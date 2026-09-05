@@ -1,0 +1,88 @@
+package com.pkxutao.xtmusic.android
+
+data class ArtistRef(
+    val guid: String,
+    val name: String
+)
+
+data class AlbumRef(
+    val guid: String,
+    val name: String,
+    val coverId: String? = null
+)
+
+data class Track(
+    val guid: String,
+    val title: String,
+    val artists: List<ArtistRef> = emptyList(),
+    val album: AlbumRef? = null,
+    val coverId: String? = null,
+    val durationSeconds: Long = 0,
+    val format: String? = null,
+    val favorite: Boolean = false
+) {
+    val artistText: String
+        get() = artists.map { it.name }.filter { it.isNotBlank() }.joinToString("、")
+            .ifBlank { "未知歌手" }
+
+    val albumText: String
+        get() = album?.name?.takeIf { it.isNotBlank() } ?: "未知专辑"
+
+    val artworkId: String?
+        get() = coverId ?: album?.coverId
+}
+
+data class Album(
+    val guid: String,
+    val name: String,
+    val coverId: String? = null,
+    val trackCount: Int = 0,
+    val artists: List<ArtistRef> = emptyList(),
+    val releaseYear: Int? = null,
+    val durationSeconds: Long = 0
+) {
+    val artistText: String
+        get() = artists.map { it.name }.filter { it.isNotBlank() }.joinToString("、")
+            .ifBlank { "未知歌手" }
+}
+
+data class Artist(
+    val guid: String,
+    val name: String,
+    val coverId: String? = null,
+    val trackCount: Int = 0,
+    val albumCount: Int = 0
+)
+
+data class Page<T>(
+    val list: List<T>,
+    val total: Int,
+    val page: Int,
+    val size: Int
+)
+
+
+data class ArtistDetail(
+    val tracks: List<Track>,
+    val albums: List<Album>
+)
+
+data class HomeData(
+    val history: List<Track>,
+    val favorites: List<Track>,
+    val albums: List<Album>,
+    val artists: List<Artist>
+)
+
+data class MusicSession(
+    val serverUrl: String,
+    val token: String,
+    val relayMode: Boolean,
+    val accessCode: String,
+    val allowHttp: Boolean,
+    val allowSelfSigned: Boolean,
+    val deviceId: String,
+    val username: String
+)
+
+// XT_ANDROID_ARTIST_TABS_QUEUE_20260901
