@@ -46,30 +46,46 @@ class GramophonePlaybackTest {
 
     @Test fun rotatesPausesAndResumesWithoutResetting() {
         ActivityScenario.launch(NowPlayingActivity::class.java).use { scenario ->
-            idle()
+            lateinit var view: GramophoneView
+            scenario.onActivity { view = record(it) }
             var before = 0f
-            scenario.onActivity {
-                assertTrue(record(it).isRecordAnimating)
-                before = record(it).recordAngle
+            instrumentation.runOnMainSync {
+                assertTrue(view.isRecordAnimating)
+                // Exercise the 360 -> 0 boundary instead of assuming angles only increase.
+                view.restoreAngle(358f)
+                before = view.recordAngle
             }
-            SystemClock.sleep(600)
-            scenario.onActivity {
-                assertTrue(record(it).recordAngle > before + 2f)
+            awaitClockwiseProgress(view, before)
+            instrumentation.runOnMainSync {
                 PlaybackState.update(sample.copy(playing = false))
-            }
-            idle()
-            scenario.onActivity {
-                assertFalse(record(it).isRecordAnimating)
-                before = record(it).recordAngle
+                assertFalse(view.isRecordAnimating)
+                before = view.recordAngle
             }
             SystemClock.sleep(400)
-            scenario.onActivity {
-                assertEquals(before, record(it).recordAngle, 0.01f)
+            instrumentation.runOnMainSync {
+                assertEquals(before, view.recordAngle, 0.01f)
                 PlaybackState.update(sample)
+                assertTrue(view.isRecordAnimating)
+                // Check continuity before another frame can run.
+                assertEquals(before, view.recordAngle, 0.01f)
             }
-            SystemClock.sleep(400)
-            scenario.onActivity { assertTrue(record(it).recordAngle > before) }
+            awaitClockwiseProgress(view, before)
         }
+    }
+
+    private fun awaitClockwiseProgress(view: GramophoneView, from: Float) {
+        val deadline = SystemClock.uptimeMillis() + 5_000L
+        var progress = 0f
+        do {
+            // Sampling directly on the main thread avoids waiting for an animated UI to idle.
+            instrumentation.runOnMainSync {
+                assertTrue(view.isRecordAnimating)
+                progress = (view.recordAngle - from + 360f) % 360f
+            }
+            if (progress >= 2f && progress < 180f) return
+            SystemClock.sleep(50)
+        } while (SystemClock.uptimeMillis() < deadline)
+        fail("Expected clockwise rotation after $from degrees; observed progress=$progress")
     }
 
     @Test fun tapShowsLyricsAndBackReturnsWithoutChangingPlayback() {
@@ -181,12 +197,20 @@ class GramophonePlaybackTest {
         // UTP uninstalls both APKs after each run. Export while the target package still exists.
         // This uses the instrumentation's shell only; no storage permission is added to the app.
         val export = "/data/local/tmp/xtmusic-gramophone-proof"
-        val command = "mkdir -p '$export' && cp '${image.absolutePath}' '$export/${image.name}' && " +
-            "test -s '$export/${image.name}'; echo $?"
+        // executeShellCommand does not parse shell operators or quoting. Run fixed-path
+        // commands separately and validate the resulting file rather than an echoed status.
+        shell("mkdir -p $export")
+        shell("cp ${image.absolutePath} $export/${image.name}")
+        val exportedSize = shell("stat -c %s $export/${image.name}").toLongOrNull()
+        check(image.length() > 0L && exportedSize == image.length()) {
+            "Failed to export emulator screenshot: expected=${image.length()}, actual=$exportedSize"
+        }
+    }
+
+    private fun shell(command: String): String {
         val descriptor = instrumentation.uiAutomation.executeShellCommand(command)
-        val status = ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use {
+        return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use {
             it.readText().trim()
         }
-        check(status == "0") { "Failed to export emulator screenshot: $status" }
     }
 }
