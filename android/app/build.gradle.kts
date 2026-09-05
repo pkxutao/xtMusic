@@ -11,9 +11,9 @@ android {
         applicationId = "com.pkxutao.xtmusic.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.1.0-alpha03"
-        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
+        versionCode = 4
+        versionName = "0.1.0-alpha04"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -46,4 +46,7 @@ android {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

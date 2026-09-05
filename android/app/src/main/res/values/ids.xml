@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="now_playing_screen" type="id" />
+    <item name="now_playing_close" type="id" />
+    <item name="now_playing_content_stage" type="id" />
+    <item name="now_playing_turntable" type="id" />
+    <item name="now_playing_lyrics" type="id" />
+    <item name="now_playing_lyrics_scroll" type="id" />
+    <item name="now_playing_track_title" type="id" />
+    <item name="now_playing_favorite" type="id" />
+    <item name="now_playing_progress" type="id" />
+    <item name="now_playing_controls" type="id" />
+    <item name="now_playing_lyrics_toggle" type="id" />
+    <item name="now_playing_previous" type="id" />
+    <item name="now_playing_play_pause" type="id" />
+    <item name="now_playing_next" type="id" />
+    <item name="now_playing_queue" type="id" />
+</resources>

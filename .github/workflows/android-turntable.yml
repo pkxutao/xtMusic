@@ -28,6 +28,12 @@ jobs:
           name: Android-Turntable-Source
           path: source-artifact/xtMusic-source.zip
           retention-days: 14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Validate unchanged shared desktop build
+        run: npm ci --ignore-scripts && npm run build
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

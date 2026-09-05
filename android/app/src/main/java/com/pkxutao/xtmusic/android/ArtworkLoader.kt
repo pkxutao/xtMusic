@@ -15,6 +15,7 @@ import java.util.concurrent.Executors
 import kotlin.math.max
 
 class ArtworkLoader(context: Context) {
+    @Volatile private var closed = false
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newFixedThreadPool(4) { task ->
@@ -32,6 +33,7 @@ class ArtworkLoader(context: Context) {
         requestedSizePx: Int,
         seed: String = coverId.orEmpty()
     ) {
+        if (closed) return
         target.scaleType = ImageView.ScaleType.CENTER_CROP
         target.background = placeholder(seed)
         val normalized = coverId?.trim().orEmpty()
@@ -72,9 +74,10 @@ class ArtworkLoader(context: Context) {
                 decodeSampled(bytes, size)
             }.getOrNull()
 
+            if (closed) return@execute
             if (bitmap != null) memoryCache.put(key, bitmap)
             mainHandler.post {
-                if (target.tag != key) return@post
+                if (closed || target.tag != key) return@post
                 if (bitmap == null) {
                     target.setImageDrawable(null)
                     target.alpha = 1f
@@ -85,6 +88,13 @@ class ArtworkLoader(context: Context) {
                 }
             }
         }
+    }
+
+    fun close() {
+        closed = true
+        executor.shutdownNow()
+        mainHandler.removeCallbacksAndMessages(null)
+        clearMemory()
     }
 
     fun clearMemory() {

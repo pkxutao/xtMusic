@@ -3,6 +3,7 @@ package com.pkxutao.xtmusic.android
 import android.app.Activity
 import android.app.Dialog
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.RenderEffect
 import android.graphics.Shader
@@ -12,8 +13,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -24,15 +27,20 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import kotlin.concurrent.thread
 
 class NowPlayingActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val artworkLoader by lazy { ArtworkLoader(this) }
     private var client: FnosClient? = null
-
     private lateinit var backgroundArtwork: ImageView
-    private lateinit var coverArtwork: ImageView
+    private lateinit var turntable: TurntableView
+    private lateinit var lyricsPanel: LinearLayout
+    private lateinit var pageTitle: TextView
+    private lateinit var modeButton: TextView
+    private lateinit var pageHint: TextView
     private lateinit var sourceAlbum: TextView
     private lateinit var title: TextView
     private lateinit var artist: TextView
@@ -44,21 +52,31 @@ class NowPlayingActivity : Activity() {
     private lateinit var toggle: TextView
     private lateinit var lyricsScroll: ScrollView
     private lateinit var lyricsContainer: LinearLayout
+    private val transportButtons = mutableListOf<View>()
+    private val pendingFavorites = mutableSetOf<String>()
     private var lyrics: List<LyricLine> = emptyList()
     private var lyricViews: List<TextView> = emptyList()
     private var loadedTrackGuid: String? = null
+    private var artworkKey: Pair<String, String?>? = null
+    private var renderedTrack: Track? = null
+    private var lyricGeneration = 0L
     private var activeLyric = -1
+    private var lyricsVisible = false
     private var dragging = false
+    private var resumed = false
+    private var followSuspendedUntil = 0L
+    private var followWasSuspended = false
     private var lastToastError: String? = null
+    private var backCallback: OnBackInvokedCallback? = null
 
     private val playbackListener: (PlaybackSnapshot) -> Unit = { snapshot ->
-        runOnUiThread { render(snapshot) }
+        runOnUiThread { if (resumed && !isDestroyed) render(snapshot) }
     }
-
     private val ticker = object : Runnable {
         override fun run() {
+            if (!resumed) return
             val snapshot = PlaybackState.snapshot
-            if (!dragging) updatePosition(snapshot)
+            updatePosition(snapshot)
             updateActiveLyric(snapshot.positionMs)
             handler.postDelayed(this, 250)
         }
@@ -70,57 +88,109 @@ class NowPlayingActivity : Activity() {
         window.navigationBarColor = XtColors.background
         client = SessionStore(this).load()?.let(::FnosClient)
         setContentView(buildUi())
+        turntable.restoreRotation(savedInstanceState?.getString("recordTrack"),
+            savedInstanceState?.getFloat("recordAngle", 0f) ?: 0f)
+        showLyrics(savedInstanceState?.getBoolean("lyricsVisible", false) ?: false)
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback = OnBackInvokedCallback { navigateBack() }.also {
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, it)
+            }
+        }
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {
-                dragging = true
-            }
-
+            override fun onStartTrackingTouch(seekBar: SeekBar?) { dragging = true }
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                dragging = false
                 val duration = PlaybackState.snapshot.durationMs
-                val position = if (duration > 0) duration * (seekBar?.progress ?: 0) / 1000 else 0
-                PlaybackService.command(this@NowPlayingActivity, PlaybackService.ACTION_SEEK, position)
+                if (duration > 0) {
+                    val position = duration * (seekBar?.progress ?: 0) / 1000
+                    PlaybackService.command(this@NowPlayingActivity, PlaybackService.ACTION_SEEK, position)
+                    followSuspendedUntil = 0L
+                    updateActiveLyric(position, force = true)
+                }
+                dragging = false
             }
-
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = Unit
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) currentTime.text = formatTime(PlaybackState.snapshot.durationMs.coerceAtLeast(0) * progress / 1000)
+            }
         })
     }
 
     override fun onResume() {
         super.onResume()
+        resumed = true
+        turntable.setHostResumed(true)
         PlaybackState.addListener(playbackListener)
+        handler.removeCallbacks(ticker)
         handler.post(ticker)
     }
 
     override fun onPause() {
+        resumed = false
+        turntable.setHostResumed(false)
         PlaybackState.removeListener(playbackListener)
         handler.removeCallbacks(ticker)
         super.onPause()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("lyricsVisible", lyricsVisible)
+        outState.putString("recordTrack", PlaybackState.snapshot.track?.guid)
+        outState.putFloat("recordAngle", turntable.discRotationDegrees)
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun onDestroy() {
+        lyricGeneration++
+        handler.removeCallbacksAndMessages(null)
+        PlaybackState.removeListener(playbackListener)
+        turntable.setHostResumed(false)
+        backgroundArtwork.tag = null
+        turntable.artwork.tag = null
+        artworkLoader.close()
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
+        }
+        super.onDestroy()
+    }
+
+    @Deprecated("The Android 13+ back dispatcher is registered in onCreate")
+    override fun onBackPressed() { navigateBack() }
+
+    private fun navigateBack() {
+        if (lyricsVisible) showLyrics(false) else finish()
+    }
+
+    private fun showLyrics(show: Boolean) {
+        lyricsVisible = show
+        turntable.visibility = if (show) View.GONE else View.VISIBLE
+        lyricsPanel.visibility = if (show) View.VISIBLE else View.GONE
+        pageTitle.text = if (show) "歌词" else "正在播放"
+        modeButton.text = if (show) "碟" else "词"
+        modeButton.contentDescription = if (show) "返回唱片" else "查看歌词"
+        pageHint.text = if (show) "点击歌词跳转 · 点“碟”返回唱片" else "点击唱片查看歌词"
+        followSuspendedUntil = 0L
+        if (show) lyricsScroll.post { updateActiveLyric(PlaybackState.snapshot.positionMs, force = true) }
     }
 
     private fun buildUi(): View {
         val root = FrameLayout(this).apply { setBackgroundColor(XtColors.background) }
         backgroundArtwork = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
-            alpha = 0.25f
             if (Build.VERSION.SDK_INT >= 31) {
                 setRenderEffect(RenderEffect.createBlurEffect(48f, 48f, Shader.TileMode.CLAMP))
             }
         }
-        val backgroundShade = View(this).apply {
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(
-                    colorWithAlpha(XtColors.background, 95),
-                    colorWithAlpha(XtColors.background, 225),
-                    XtColors.background
-                )
-            )
-        }
-        root.addView(backgroundArtwork, matchMatch())
-        root.addView(backgroundShade, matchMatch())
-
+        // Keep tint on the wrapper: artwork cross-fades must not remove the dark treatment.
+        root.addView(FrameLayout(this).apply {
+            alpha = 0.25f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            addView(backgroundArtwork, matchMatch())
+        }, matchMatch())
+        root.addView(View(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(
+                colorWithAlpha(XtColors.background, 95), colorWithAlpha(XtColors.background, 225), XtColors.background))
+        }, matchMatch())
         val screen = LinearLayout(this).apply {
+            id = R.id.now_playing_screen
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(6), dp(18), dp(12))
             applySystemBarInsets()
@@ -130,14 +200,16 @@ class NowPlayingActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         val close = actionButton("⌄", compact = true).apply {
+            id = R.id.now_playing_close
             textSize = 25f
-            setOnClickListener { finish() }
+            contentDescription = "返回"
+            setOnClickListener { navigateBack() }
         }
         val heading = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
         }
-        val label = TextView(this).apply {
+        pageTitle = TextView(this).apply {
             text = "正在播放"
             styleText(15f, XtColors.text, true)
             gravity = Gravity.CENTER
@@ -150,44 +222,67 @@ class NowPlayingActivity : Activity() {
             ellipsize = TextUtils.TruncateAt.END
             setPadding(dp(6), dp(3), dp(6), 0)
         }
-        heading.addView(label)
+        heading.addView(pageTitle)
         heading.addView(sourceAlbum)
-        val more = actionButton("⋮", compact = true).apply { textSize = 25f }
-        top.addView(close, LinearLayout.LayoutParams(dp(46), dp(44)))
+        val more = actionButton("⋮", compact = true).apply {
+            textSize = 25f
+            contentDescription = "打开播放队列"
+            setOnClickListener { showPlaybackQueue() }
+        }
+        top.addView(close, LinearLayout.LayoutParams(dp(48), dp(48)))
         top.addView(heading, LinearLayout.LayoutParams(0, dp(48), 1f))
-        top.addView(more, LinearLayout.LayoutParams(dp(46), dp(44)))
+        top.addView(more, LinearLayout.LayoutParams(dp(48), dp(48)))
 
-        val coverStage = FrameLayout(this).apply {
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+        val stage = FrameLayout(this).apply { id = R.id.now_playing_content_stage }
+        turntable = TurntableView(this).apply {
+            id = R.id.now_playing_turntable
+            setOnClickListener { showLyrics(true) }
         }
-        val coverShadow = View(this).apply {
-            background = roundedBackground(colorWithAlpha(Color.BLACK, 100), dp(30).toFloat())
-            elevation = dp(18).toFloat()
+        stage.addView(turntable, matchMatch())
+        lyricsPanel = LinearLayout(this).apply {
+            id = R.id.now_playing_lyrics
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = roundedBackground(colorWithAlpha(XtColors.surfaceRaised, 200), dp(22).toFloat())
+            visibility = View.GONE
         }
-        coverArtwork = ImageView(this).apply {
-            background = gradientBackground(
-                colorWithAlpha(XtColors.primaryStrong, 160),
-                XtColors.surfaceRaised,
-                dp(28).toFloat()
-            )
-            roundedOutline(dp(28).toFloat())
-            elevation = dp(16).toFloat()
+        lyricsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        lyricsScroll = ScrollView(this).apply {
+            id = R.id.now_playing_lyrics_scroll
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(28))
+            addView(lyricsContainer, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            // Observe, do not consume, scrolling. Let the user read without fighting auto-follow.
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE ||
+                    event.actionMasked == MotionEvent.ACTION_UP) {
+                    followSuspendedUntil = SystemClock.uptimeMillis() + 4_000L
+                    followWasSuspended = true
+                }
+                false
+            }
+            addOnLayoutChangeListener { _, _, t, _, b, _, oldT, _, oldB ->
+                if (b - t != oldB - oldT) {
+                    val padding = ((b - t) / 2 - dp(24)).coerceAtLeast(dp(8))
+                    lyricsContainer.setPadding(0, padding, 0, padding)
+                    updateActiveLyric(PlaybackState.snapshot.positionMs, force = true)
+                }
+            }
         }
-        coverStage.addView(coverShadow, FrameLayout.LayoutParams(dp(286), dp(286), Gravity.CENTER).apply {
-            topMargin = dp(10)
-        })
-        coverStage.addView(coverArtwork, FrameLayout.LayoutParams(dp(280), dp(280), Gravity.CENTER))
+        lyricsPanel.addView(lyricsScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        stage.addView(lyricsPanel, matchMatch())
 
+        val footer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val infoRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), dp(4), dp(4), 0)
+            setPadding(dp(4), dp(8), dp(4), 0)
         }
-        val copy = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
+        val copy = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         title = TextView(this).apply {
+            id = R.id.now_playing_track_title
             styleText(22f, XtColors.text, true)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
@@ -203,15 +298,16 @@ class NowPlayingActivity : Activity() {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             setPadding(0, dp(7), 0, dp(2))
-            isClickable = true
             setOnClickListener { openAlbum() }
         }
         copy.addView(title)
         copy.addView(artist)
         copy.addView(album)
         favorite = actionButton("♡", compact = true).apply {
+            id = R.id.now_playing_favorite
             textSize = 28f
             setTextColor(XtColors.pink)
+            contentDescription = "收藏歌曲"
             setOnClickListener { toggleFavorite() }
         }
         infoRow.addView(copy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -225,105 +321,109 @@ class NowPlayingActivity : Activity() {
         currentTime = TextView(this).apply {
             styleText(11f, XtColors.muted)
             text = "0:00"
+            gravity = Gravity.CENTER_VERTICAL
         }
         totalTime = TextView(this).apply {
             styleText(11f, XtColors.muted)
             text = "0:00"
-            gravity = Gravity.END
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
         }
         seekBar = SeekBar(this).apply {
+            id = R.id.now_playing_progress
+            contentDescription = "播放进度"
             max = 1000
             progressTintList = android.content.res.ColorStateList.valueOf(XtColors.primary)
             progressBackgroundTintList = android.content.res.ColorStateList.valueOf(colorWithAlpha(Color.WHITE, 55))
             thumbTintList = android.content.res.ColorStateList.valueOf(XtColors.primarySoft)
         }
-        timeRow.addView(currentTime, LinearLayout.LayoutParams(dp(46), dp(38)))
-        timeRow.addView(seekBar, LinearLayout.LayoutParams(0, dp(38), 1f))
-        timeRow.addView(totalTime, LinearLayout.LayoutParams(dp(46), dp(38)))
+        timeRow.addView(currentTime, LinearLayout.LayoutParams(dp(46), dp(48)))
+        timeRow.addView(seekBar, LinearLayout.LayoutParams(0, dp(48), 1f))
+        timeRow.addView(totalTime, LinearLayout.LayoutParams(dp(46), dp(48)))
 
         val controls = LinearLayout(this).apply {
+            id = R.id.now_playing_controls
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, dp(1), 0, dp(10))
+            setPadding(0, dp(4), 0, dp(6))
         }
-        val shuffle = actionButton("⌘", compact = true).apply {
-            textSize = 20f
-            setTextColor(XtColors.muted)
+        modeButton = actionButton("词", compact = true).apply {
+            id = R.id.now_playing_lyrics_toggle
+            styleText(17f, XtColors.primarySoft, true)
+            contentDescription = "查看歌词"
+            setOnClickListener { showLyrics(!lyricsVisible) }
         }
         val previous = actionButton("|◀", compact = true).apply {
+            id = R.id.now_playing_previous
             textSize = 20f
-            setOnClickListener {
-                PlaybackService.command(this@NowPlayingActivity, PlaybackService.ACTION_PREVIOUS)
-            }
+            contentDescription = "上一首"
+            setOnClickListener { PlaybackService.command(this@NowPlayingActivity, PlaybackService.ACTION_PREVIOUS) }
         }
         toggle = actionButton("▶", primary = true).apply {
+            id = R.id.now_playing_play_pause
             textSize = 25f
-            setOnClickListener {
-                PlaybackService.command(this@NowPlayingActivity, PlaybackService.ACTION_TOGGLE)
-            }
+            contentDescription = "播放"
+            setOnClickListener { PlaybackService.command(this@NowPlayingActivity, PlaybackService.ACTION_TOGGLE) }
         }
         val next = actionButton("▶|", compact = true).apply {
+            id = R.id.now_playing_next
             textSize = 20f
-            setOnClickListener {
-                PlaybackService.command(this@NowPlayingActivity, PlaybackService.ACTION_NEXT)
-            }
+            contentDescription = "下一首"
+            setOnClickListener { PlaybackService.command(this@NowPlayingActivity, PlaybackService.ACTION_NEXT) }
         }
         val queue = actionButton("≡", compact = true).apply {
+            id = R.id.now_playing_queue
             textSize = 22f
-            setTextColor(XtColors.muted)
             contentDescription = "打开播放队列"
             setOnClickListener { showPlaybackQueue() }
         }
-        controls.addView(shuffle, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(6) })
-        controls.addView(previous, LinearLayout.LayoutParams(dp(58), dp(52)).apply { marginEnd = dp(12) })
-        controls.addView(toggle, LinearLayout.LayoutParams(dp(68), dp(60)))
-        controls.addView(next, LinearLayout.LayoutParams(dp(58), dp(52)).apply { marginStart = dp(12) })
-        controls.addView(queue, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(6) })
-
-        val lyricsCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(8))
-            background = roundedBackground(colorWithAlpha(XtColors.surfaceRaised, 235), dp(22).toFloat())
-        }
-        val lyricsHeading = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val lyricsTitle = TextView(this).apply {
-            text = "歌词"
-            styleText(16f, XtColors.text, true)
-        }
-        val hint = TextView(this).apply {
-            text = "点击歌词可跳转"
+        transportButtons.addAll(listOf(previous, toggle, next))
+        controls.addView(modeButton, LinearLayout.LayoutParams(0, dp(48), 1f))
+        controls.addView(previous, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginStart = dp(4) })
+        controls.addView(toggle, LinearLayout.LayoutParams(dp(64), dp(64)).apply {
+            marginStart = dp(8); marginEnd = dp(8)
+        })
+        controls.addView(next, LinearLayout.LayoutParams(0, dp(52), 1f).apply { marginEnd = dp(4) })
+        controls.addView(queue, LinearLayout.LayoutParams(0, dp(48), 1f))
+        pageHint = TextView(this).apply {
+            text = "点击唱片查看歌词"
             styleText(11f, XtColors.muted)
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, dp(4))
         }
-        lyricsHeading.addView(lyricsTitle, LinearLayout.LayoutParams(0, dp(34), 1f))
-        lyricsHeading.addView(hint, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)))
-        lyricsContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(55), 0, dp(90))
-        }
-        lyricsScroll = ScrollView(this).apply {
-            isFillViewport = true
-            isVerticalScrollBarEnabled = false
-            addView(lyricsContainer, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        lyricsCard.addView(lyricsHeading, matchWrap())
-        lyricsCard.addView(lyricsScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        footer.addView(infoRow, matchWrap())
+        footer.addView(timeRow, matchWrap())
+        footer.addView(controls, matchWrap())
+        footer.addView(pageHint, matchWrap())
 
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val body = LinearLayout(this).apply {
+            orientation = if (landscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        }
+        if (landscape) {
+            // Avoid a zero-height record on short screens; the controls remain scrollable.
+            body.addView(stage, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            body.addView(ScrollView(this).apply {
+                isFillViewport = true
+                isVerticalScrollBarEnabled = false
+                setPadding(dp(12), 0, 0, 0)
+                addView(footer, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        } else {
+            body.addView(stage, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            body.addView(footer, matchWrap())
+        }
         screen.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)))
-        screen.addView(coverStage, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(306)))
-        screen.addView(infoRow, matchWrap())
-        screen.addView(timeRow, matchWrap())
-        screen.addView(controls, matchWrap())
-        screen.addView(lyricsCard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        screen.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(screen, matchMatch())
         return root
     }
 
     private fun render(snapshot: PlaybackSnapshot) {
         val track = snapshot.track
+        turntable.bindTrack(track?.guid)
+        turntable.setPlaybackActive(track != null && snapshot.playing && !snapshot.preparing && snapshot.error == null)
+        transportButtons.forEach { it.isEnabled = track != null }
+        seekBar.isEnabled = track != null && snapshot.durationMs > 0
         if (track == null) {
             sourceAlbum.text = "来自你的音乐库"
             title.text = "尚未播放歌曲"
@@ -331,30 +431,50 @@ class NowPlayingActivity : Activity() {
             album.text = "未知专辑"
             album.isEnabled = false
             favorite.text = "♡"
+            favorite.isEnabled = false
             toggle.text = "▶"
+            toggle.contentDescription = "播放"
+            if (loadedTrackGuid != null || lyricViews.isNotEmpty()) lyricGeneration++
+            loadedTrackGuid = null
+            renderedTrack = null
+            artworkKey = null
+            lyrics = emptyList()
+            lyricViews = emptyList()
+            activeLyric = -1
+            backgroundArtwork.tag = null
+            backgroundArtwork.setImageDrawable(null)
+            backgroundArtwork.background = null
+            turntable.artwork.tag = null
+            turntable.artwork.setImageDrawable(null)
             lyricsContainer.removeAllViews()
             lyricsContainer.addView(emptyLyrics("暂无播放内容"))
+            updatePosition(snapshot)
             return
         }
-        sourceAlbum.text = "来自专辑：${track.albumText}"
-        title.text = track.title
-        artist.bindArtistLinks(
-            track.artists,
-            fallback = track.artistText,
-            onArtistClick = ::openArtist
-        )
-        album.text = "${track.albumText}  ›"
-        album.isEnabled = track.album != null
-        favorite.text = if (track.favorite) "♥" else "♡"
+        if (renderedTrack != track) {
+            renderedTrack = track
+            sourceAlbum.text = "来自专辑：${track.albumText}"
+            title.text = track.title
+            artist.bindArtistLinks(track.artists, fallback = track.artistText, onArtistClick = ::openArtist)
+            album.text = "${track.albumText}  ›"
+            album.isEnabled = track.album != null
+            favorite.text = if (track.favorite) "♥" else "♡"
+            favorite.contentDescription = if (track.favorite) "取消收藏" else "收藏歌曲"
+        }
+        favorite.isEnabled = client != null && track.guid !in pendingFavorites
         toggle.text = if (snapshot.playing) "Ⅱ" else if (snapshot.preparing) "…" else "▶"
-        artworkLoader.load(coverArtwork, client, track.artworkId, dp(900), track.guid)
-        artworkLoader.load(backgroundArtwork, client, track.artworkId, dp(1200), "background:${track.guid}")
-
+        toggle.contentDescription = if (snapshot.playing) "暂停" else "播放"
+        val newArtworkKey = track.guid to track.artworkId
+        if (artworkKey != newArtworkKey) {
+            artworkKey = newArtworkKey
+            artworkLoader.load(turntable.artwork, client, track.artworkId, dp(360), track.guid)
+            artworkLoader.load(backgroundArtwork, client, track.artworkId, dp(600), "background:${track.guid}")
+        }
         val error = snapshot.error
         if (!error.isNullOrBlank() && error != lastToastError) {
             lastToastError = error
             Toast.makeText(this, error, Toast.LENGTH_LONG).show()
-        }
+        } else if (error == null) lastToastError = null
         updatePosition(snapshot)
         if (loadedTrackGuid != track.guid) {
             loadedTrackGuid = track.guid
@@ -469,46 +589,55 @@ class NowPlayingActivity : Activity() {
     }
 
     private fun toggleFavorite() {
-        val snapshot = PlaybackState.snapshot
-        val track = snapshot.track ?: return
+        val track = PlaybackState.snapshot.track ?: return
         val activeClient = client ?: return
+        if (!pendingFavorites.add(track.guid)) return
         favorite.isEnabled = false
         thread(name = "xtmusic-favorite") {
-            runCatching {
+            val result = runCatching {
                 if (track.favorite) activeClient.unfavorite(track.guid) else activeClient.favorite(track.guid)
-            }.onSuccess {
-                runOnUiThread {
-                    val updated = track.copy(favorite = !track.favorite)
-                    PlaybackState.update(PlaybackState.snapshot.copy(track = updated))
-                    favorite.isEnabled = true
+            }
+            runOnUiThread {
+                pendingFavorites.remove(track.guid)
+                if (isDestroyed || isFinishing) return@runOnUiThread
+                val current = PlaybackState.snapshot
+                // A late response for A must never replace B after the user skips tracks.
+                if (result.isSuccess && current.track?.guid == track.guid) {
+                    PlaybackState.update(current.copy(track = current.track.copy(favorite = !track.favorite)))
                 }
-            }.onFailure { error ->
-                runOnUiThread {
-                    favorite.isEnabled = true
-                    Toast.makeText(this, error.message ?: "收藏操作失败", Toast.LENGTH_LONG).show()
-                }
+                favorite.isEnabled = current.track != null && current.track.guid !in pendingFavorites
+                if (result.isFailure) Toast.makeText(this, "收藏操作失败，请重试", Toast.LENGTH_LONG).show()
             }
         }
     }
 
     private fun loadLyrics(track: Track) {
+        val generation = ++lyricGeneration
         lyrics = emptyList()
+        lyricViews = emptyList()
         activeLyric = -1
+        followSuspendedUntil = 0L
         lyricsContainer.removeAllViews()
+        val activeClient = client
+        if (activeClient == null) {
+            lyricsContainer.addView(emptyLyrics("连接音乐库后查看歌词"))
+            return
+        }
         lyricsContainer.addView(emptyLyrics("正在加载歌词…"))
-        val activeClient = client ?: return
         thread(name = "xtmusic-lyrics") {
-            try {
-                val parsed = LyricsParser.parse(activeClient.getLyrics(track.guid))
-                runOnUiThread {
-                    if (PlaybackState.snapshot.track?.guid != track.guid) return@runOnUiThread
+            val result = runCatching { LyricsParser.parse(activeClient.getLyrics(track.guid)) }
+            runOnUiThread {
+                if (isDestroyed || isFinishing || generation != lyricGeneration ||
+                    PlaybackState.snapshot.track?.guid != track.guid) return@runOnUiThread
+                result.onSuccess { parsed ->
                     lyrics = parsed
                     renderLyrics()
-                }
-            } catch (error: Exception) {
-                runOnUiThread {
+                }.onFailure {
                     lyricsContainer.removeAllViews()
-                    lyricsContainer.addView(emptyLyrics(error.message ?: "歌词加载失败"))
+                    lyricsContainer.addView(emptyLyrics("歌词加载失败，点击重试").apply {
+                        isFocusable = true
+                        setOnClickListener { loadLyrics(track) }
+                    })
                 }
             }
         }
@@ -517,57 +646,62 @@ class NowPlayingActivity : Activity() {
     private fun renderLyrics() {
         lyricsContainer.removeAllViews()
         if (lyrics.isEmpty()) {
-            lyricsContainer.addView(emptyLyrics("这首歌没有同步歌词"))
             lyricViews = emptyList()
+            lyricsContainer.addView(emptyLyrics("这首歌没有同步歌词"))
             return
         }
         lyricViews = lyrics.map { line ->
             TextView(this).apply {
                 text = line.text
-                styleText(16f, colorWithAlpha(XtColors.text, 110), false)
+                styleText(16f, colorWithAlpha(XtColors.text, 110))
                 gravity = Gravity.CENTER
                 setPadding(dp(14), dp(12), dp(14), dp(12))
+                isFocusable = true
+                contentDescription = "${line.text}，跳转到 ${formatTime(line.timeMs)}"
                 setOnClickListener {
                     PlaybackService.command(this@NowPlayingActivity, PlaybackService.ACTION_SEEK, line.timeMs)
-                    updateActiveLyric(line.timeMs)
+                    followSuspendedUntil = 0L
+                    updateActiveLyric(line.timeMs, force = true)
                 }
                 lyricsContainer.addView(this, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ))
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
         }
-        updateActiveLyric(PlaybackState.snapshot.positionMs, force = true)
+        lyricsScroll.post { updateActiveLyric(PlaybackState.snapshot.positionMs, force = true) }
     }
 
     private fun updatePosition(snapshot: PlaybackSnapshot) {
         val duration = snapshot.durationMs.coerceAtLeast(0)
-        val position = snapshot.positionMs.coerceIn(0, duration.coerceAtLeast(0))
-        currentTime.text = formatTime(position)
+        val position = snapshot.positionMs.coerceIn(0, duration)
         totalTime.text = formatTime(duration)
-        if (!dragging) seekBar.progress = if (duration > 0) ((position * 1000) / duration).toInt() else 0
+        if (!dragging) {
+            currentTime.text = formatTime(position)
+            seekBar.progress = if (duration > 0) ((position * 1000) / duration).toInt() else 0
+        }
     }
 
     private fun updateActiveLyric(positionMs: Long, force: Boolean = false) {
+        if (!lyricsVisible) return
         val index = LyricsParser.activeIndex(lyrics, positionMs)
-        if (!force && index == activeLyric) return
+        val follow = SystemClock.uptimeMillis() >= followSuspendedUntil
+        val resumeFollow = follow && followWasSuspended
+        if (!force && index == activeLyric && !resumeFollow) return
         activeLyric = index
+        followWasSuspended = !follow
         lyricViews.forEachIndexed { current, view ->
             val active = current == index
             view.setTextColor(if (active) XtColors.primarySoft else colorWithAlpha(XtColors.text, 100))
             view.textSize = if (active) 18f else 16f
             view.setTypeface(view.typeface, if (active) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-            view.background = if (active) {
-                roundedBackground(colorWithAlpha(XtColors.primaryStrong, 34), dp(13).toFloat())
-            } else null
+            view.background = if (active) roundedBackground(colorWithAlpha(XtColors.primaryStrong, 34), dp(13).toFloat()) else null
         }
-        if (index in lyricViews.indices) {
+        if ((follow || force) && index in lyricViews.indices) {
             val target = lyricViews[index]
             lyricsScroll.post {
-                lyricsScroll.smoothScrollTo(
-                    0,
-                    (target.top - lyricsScroll.height / 2 + target.height / 2).coerceAtLeast(0)
-                )
+                if (lyricsVisible && target.parent === lyricsContainer) {
+                    lyricsScroll.smoothScrollTo(0,
+                        (target.top - lyricsScroll.height / 2 + target.height / 2).coerceAtLeast(0))
+                }
             }
         }
     }
@@ -576,7 +710,7 @@ class NowPlayingActivity : Activity() {
         text = message
         styleText(14f, XtColors.muted)
         gravity = Gravity.CENTER
-        setPadding(0, dp(55), 0, dp(55))
+        setPadding(dp(8), dp(20), dp(8), dp(20))
     }
 
     private fun actionButton(label: String, primary: Boolean = false, compact: Boolean = false): TextView {

@@ -16,6 +16,7 @@
         android:usesCleartextTraffic="true">
         <activity
             android:name=".NowPlayingActivity"
+            android:enableOnBackInvokedCallback="true"
             android:exported="false" />
         <activity
             android:name=".MainActivity"
