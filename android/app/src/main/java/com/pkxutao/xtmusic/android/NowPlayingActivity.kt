@@ -370,8 +370,23 @@ class NowPlayingActivity : Activity() {
         screen.addView(infoRow, matchWrap())
         screen.addView(timeRow, matchWrap())
         screen.addView(controls, matchWrap())
-        // Portrait fills the screen; short landscape / enlarged fonts can scroll instead of clipping.
-        root.addView(ScrollView(this).apply {
+        // Bound the weighted page to the viewport. A normal ScrollView first measures its child
+        // with UNSPECIFIED height, letting the media stage grow and push controls off-screen.
+        // Keep the 570dp minimum page scrollable for short windows and enlarged fonts.
+        root.addView(object : ScrollView(this) {
+            override fun measureChildWithMargins(child: View, parentWidthMeasureSpec: Int,
+                widthUsed: Int, parentHeightMeasureSpec: Int, heightUsed: Int) {
+                val margins = child.layoutParams as ViewGroup.MarginLayoutParams
+                val widthSpec = ViewGroup.getChildMeasureSpec(parentWidthMeasureSpec,
+                    paddingLeft + paddingRight + margins.leftMargin + margins.rightMargin + widthUsed,
+                    margins.width)
+                val availableHeight = View.MeasureSpec.getSize(parentHeightMeasureSpec) -
+                    paddingTop - paddingBottom - margins.topMargin - margins.bottomMargin - heightUsed
+                val heightSpec = View.MeasureSpec.makeMeasureSpec(
+                    maxOf(child.minimumHeight, availableHeight, 0), View.MeasureSpec.EXACTLY)
+                child.measure(widthSpec, heightSpec)
+            }
+        }.apply {
             isFillViewport = true
             isVerticalScrollBarEnabled = false
             addView(screen, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)

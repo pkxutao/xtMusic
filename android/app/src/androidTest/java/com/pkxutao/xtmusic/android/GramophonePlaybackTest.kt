@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.KeyEvent
@@ -95,6 +96,7 @@ class GramophonePlaybackTest {
                 seedArtwork(record(activity))
                 assertTrue(record(activity).width > 0 && record(activity).height > 0)
                 assertTrue(record(activity).artwork.width > 0)
+                assertControlsVisibleInPortrait(activity)
             }
             idle()
             screenshot("record")
@@ -111,6 +113,7 @@ class GramophonePlaybackTest {
                 NowPlayingActivity::class.java.getDeclaredMethod("renderLyrics").apply { isAccessible = true }.invoke(activity)
             }
             idle()
+            scenario.onActivity { assertControlsVisibleInPortrait(it) }
             screenshot("lyrics")
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             idle()
@@ -166,6 +169,17 @@ class GramophonePlaybackTest {
                 assertEquals(View.VISIBLE, it.window.decorView.findViewWithTag<View>("player_lyrics_page").visibility)
             }
         }
+    }
+
+    private fun assertControlsVisibleInPortrait(activity: NowPlayingActivity) {
+        val config = activity.resources.configuration
+        // Short windows intentionally scroll, but ordinary portrait playback must not need it.
+        if (config.screenHeightDp < 650 || config.fontScale > 1.1f) return
+        val control = activity.window.decorView.findViewWithTag<View>("player_play_pause")
+        val visible = Rect()
+        assertTrue("Playback controls must be visible without scrolling", control.getGlobalVisibleRect(visible))
+        assertEquals("Playback controls must not be vertically clipped", control.height, visible.height())
+        assertEquals("Playback controls must not be horizontally clipped", control.width, visible.width())
     }
 
     private fun seedArtwork(view: GramophoneView) {
