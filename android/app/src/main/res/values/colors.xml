@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="xt_background">#080A10</color>
+    <color name="xt_surface">#141722</color>
+    <color name="xt_primary">#AB70FF</color>
+    <color name="xt_text">#F8F8FC</color>
+    <color name="xt_muted">#8F94A9</color>
+</resources>
