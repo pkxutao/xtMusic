@@ -28,11 +28,14 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          log-accepted-android-sdk-licenses: false
       - name: Install SDK
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+          cache-read-only: false
       - name: Archive exact source
         run: |
           mkdir -p artifact
@@ -64,7 +67,7 @@ jobs:
             gradle -p android --no-daemon connectedDebugAndroidTest
             mkdir -p artifact/ui-small
             cp -r android/app/build/reports/androidTests/connected artifact/ui-small/reports
-            adb pull /sdcard/Android/data/com.pkxutao.xtmusic.android.debug/files/gramophone-proof artifact/screenshots
+            adb pull /data/local/tmp/xtmusic-gramophone-proof artifact/screenshots
             adb shell wm size reset
             adb shell wm density reset
             adb shell settings put system font_scale 1.0

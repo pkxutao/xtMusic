@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
@@ -174,9 +175,18 @@ class GramophonePlaybackTest {
         val directory = File(context.getExternalFilesDir(null), "gramophone-proof").apply { mkdirs() }
         val bitmap = instrumentation.uiAutomation.takeScreenshot()
         checkNotNull(bitmap)
-        File(directory, "$name-${config.screenWidthDp}x${config.screenHeightDp}.png").outputStream().use {
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
-        }
+        val image = File(directory, "$name-${config.screenWidthDp}x${config.screenHeightDp}.png")
+        image.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
+        // UTP uninstalls both APKs after each run. Export while the target package still exists.
+        // This uses the instrumentation's shell only; no storage permission is added to the app.
+        val export = "/data/local/tmp/xtmusic-gramophone-proof"
+        val command = "mkdir -p '$export' && cp '${image.absolutePath}' '$export/${image.name}' && " +
+            "test -s '$export/${image.name}'; echo $?"
+        val descriptor = instrumentation.uiAutomation.executeShellCommand(command)
+        val status = ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use {
+            it.readText().trim()
+        }
+        check(status == "0") { "Failed to export emulator screenshot: $status" }
     }
 }
