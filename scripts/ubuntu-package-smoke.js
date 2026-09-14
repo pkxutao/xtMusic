@@ -1,13 +1,12 @@
 'use strict';
 
-// Run under xvfb-run on a disposable CI runner. This launches the actual
-// packaged application with its normal sandbox and an isolated empty profile.
+// Exercise the actual packaged application with its normal sandbox and an
+// isolated empty profile. Run this script under xvfb-run on a disposable runner.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
-
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function freePort() {
@@ -33,6 +32,11 @@ async function main() {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'xtmusic-ubuntu-smoke-'));
   const port = await freePort();
   const output = fs.createWriteStream(path.join(proofDir, `${label}.log`));
+  const trace = (event, details = {}) => {
+    const message = JSON.stringify({ at: new Date().toISOString(), event, ...details });
+    output.write(`${message}\n`);
+    console.log(message);
+  };
   const child = spawn(binary, [
     `--user-data-dir=${profile}`,
     '--remote-debugging-address=127.0.0.1',
@@ -48,39 +52,50 @@ async function main() {
   let counter = 0;
   const pending = new Map();
   const timers = new Set();
+  let received = 0;
   try {
     let page;
     const deadline = Date.now() + 45000;
     while (Date.now() < deadline) {
       if (spawnError) throw spawnError;
       if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error(`Packaged application exited before startup: ${child.exitCode || child.signalCode}`);
+        throw new Error(`Application exited before startup: ${child.exitCode ?? child.signalCode}`);
       }
       try {
         const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2000) });
         if (response.ok) {
-          page = (await response.json()).find((item) => item.type === 'page' && item.webSocketDebuggerUrl);
+          const pages = await response.json();
+          // Do not evaluate against Chromium's initial blank page while the
+          // renderer is being replaced by Electron's loadFile navigation.
+          page = pages.find((item) => item.type === 'page' && item.webSocketDebuggerUrl &&
+            item.url?.startsWith('file:') && item.url.includes('/dist/renderer/index.html') &&
+            item.title?.includes('XT Music'));
           if (page) break;
         }
       } catch {}
       await delay(250);
     }
-    if (!page) throw new Error('No packaged application page appeared within 45 seconds');
+    if (!page) throw new Error('No loaded application page appeared within 45 seconds');
+    trace('target-ready', { title: page.title, url: page.url });
     socket = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('CDP connection timed out')), 5000);
-      socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
-      socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('CDP connection failed')); }, { once: true });
-    });
     socket.addEventListener('message', (event) => {
+      received += 1;
       const message = JSON.parse(event.data);
       const handler = pending.get(message.id);
       if (!handler) return;
+      trace('cdp-response', { id: message.id, error: message.error || null });
       pending.delete(message.id);
       clearTimeout(handler.timer);
       timers.delete(handler.timer);
       if (message.error) handler.reject(new Error(JSON.stringify(message.error)));
       else handler.resolve(message.result);
+    });
+    socket.addEventListener('close', (event) => trace('cdp-close', { code: event.code, reason: event.reason }));
+    socket.addEventListener('error', () => trace('cdp-error'));
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('CDP connection timed out')), 5000);
+      socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+      socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('CDP connection failed')); }, { once: true });
     });
     function cdp(method, params = {}) {
       return new Promise((resolve, reject) => {
@@ -88,13 +103,16 @@ async function main() {
         const timer = setTimeout(() => {
           pending.delete(id);
           timers.delete(timer);
-          reject(new Error(`CDP command timed out: ${method}`));
-        }, 8000);
+          reject(new Error(`CDP timeout: ${method}; socket=${socket.readyState}, received=${received}`));
+        }, 20000);
         timers.add(timer);
         pending.set(id, { resolve, reject, timer });
+        trace('cdp-request', { id, method });
         socket.send(JSON.stringify({ id, method, params }));
       });
     }
+    await cdp('Runtime.enable');
+    await cdp('Page.enable');
     let state;
     for (let attempt = 0; attempt < 80; attempt += 1) {
       const result = await cdp('Runtime.evaluate', {
@@ -110,13 +128,13 @@ async function main() {
       if (state.ready === 'complete' && state.inputs > 0 && state.preloadAvailable) break;
       await delay(250);
     }
-    // The HTML title is intentionally static; package versions are independently
-    // checked against package.json and the DEB metadata in the build workflow.
+    // The HTML title is static; DEB and ASAR metadata independently verify the version.
     if (!state || !state.title.includes('XT Music') || state.inputs < 1 ||
         !state.preloadAvailable || !state.nodeIntegrationDisabled ||
         !/XT Music|登录|服务器|飞牛/.test(state.text)) {
       throw new Error(`Packaged login screen validation failed: ${JSON.stringify(state)}`);
     }
+    await delay(1000);
     const screenshot = await cdp('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(path.join(proofDir, `${label}.png`), Buffer.from(screenshot.data, 'base64'));
     const proof = { verifiedAt: new Date().toISOString(), platform: process.platform,
@@ -132,7 +150,11 @@ async function main() {
       await delay(1500);
       try { process.kill(-child.pid, 'SIGKILL'); } catch {}
     }
-    output.end();
+    const diagnostic = path.join(profile, 'logs', 'xtmusic-diagnostic.log');
+    if (fs.existsSync(diagnostic)) {
+      fs.copyFileSync(diagnostic, path.join(proofDir, `${label}-application.log`));
+    }
+    await new Promise((resolve) => output.end(resolve));
     fs.rmSync(profile, { recursive: true, force: true });
   }
 }
