@@ -48,8 +48,12 @@ jobs:
           pulseaudio --start --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=xtmusic_ci
           pactl set-default-sink xtmusic_ci
-      - name: Install locked dependencies
-        run: npm ci --no-audit --no-fund
+      - name: Install locked dependencies and pinned Electron runtime
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          env -u ELECTRON_SKIP_BINARY_DOWNLOAD node node_modules/electron/install.js
+          node -e "require('node:fs').accessSync(require('electron'), require('node:fs').constants.X_OK)"
       - name: Build renderer and run application tests
         run: |
           set -euo pipefail
@@ -59,8 +63,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+          if test -f node_modules/electron/dist/chrome-sandbox; then
+            sudo chown root:root node_modules/electron/dist/chrome-sandbox
+            sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+          fi
           for TEST in windows-large-library-smoke windows-now-playing-smoke windows-album-navigation-smoke windows-track-list-typography-smoke; do
             timeout 150s xvfb-run -a npx --no-install electron "scripts/$TEST.js" \
               2>&1 | tee "verification/${TEST/windows-/ubuntu-}.log"
@@ -109,8 +115,10 @@ jobs:
             > verification/appimage-contents.txt
           APPDIR="$RUNNER_TEMP/xtmusic-appimage/squashfs-root"
           cmp '/opt/XT Music/resources/app.asar' "$APPDIR/resources/app.asar"
-          sudo chown root:root "$APPDIR/chrome-sandbox"
-          sudo chmod 4755 "$APPDIR/chrome-sandbox"
+          if test -f "$APPDIR/chrome-sandbox"; then
+            sudo chown root:root "$APPDIR/chrome-sandbox"
+            sudo chmod 4755 "$APPDIR/chrome-sandbox"
+          fi
           timeout 100s xvfb-run -a node scripts/ubuntu-package-smoke.js \
             "$APPDIR/AppRun" ubuntu-appimage-extracted "$VERSION"
       - name: Collect verified packages and build provenance
@@ -215,7 +223,7 @@ jobs:
           # XT Music Ubuntu ${VERSION}
 
           从最新主分支 master 构建的 Ubuntu x64 桌面版，源码提交：${GITHUB_SHA}。
-          使用当前桌面版 0.3.7 的界面与功能；本次仅增加 Ubuntu 构建和验证，不改动桌面交互，也不把安卓留声机界面自动移植到桌面。
+          使用当前桌面版的界面与功能；本次仅增加 Ubuntu 构建和验证，不改动桌面交互，也不把安卓留声机界面自动移植到桌面。
 
           ## 下载与安装
           - XT-Music-${VERSION}-ubuntu-x64.deb：Ubuntu amd64 安装包。
