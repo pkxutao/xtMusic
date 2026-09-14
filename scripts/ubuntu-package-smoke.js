@@ -110,7 +110,9 @@ async function main() {
       if (state.ready === 'complete' && state.inputs > 0 && state.preloadAvailable) break;
       await delay(250);
     }
-    if (!state || !state.title.includes(version) || state.inputs < 1 ||
+    // The HTML title is intentionally static; package versions are independently
+    // checked against package.json and the DEB metadata in the build workflow.
+    if (!state || !state.title.includes('XT Music') || state.inputs < 1 ||
         !state.preloadAvailable || !state.nodeIntegrationDisabled ||
         !/XT Music|登录|服务器|飞牛/.test(state.text)) {
       throw new Error(`Packaged login screen validation failed: ${JSON.stringify(state)}`);
