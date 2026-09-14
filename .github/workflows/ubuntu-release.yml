@@ -154,6 +154,7 @@ jobs:
           } > release-out/BUILD-INFO-Ubuntu.txt
           {
             echo 'Application checks, syntax validation and Node unit tests: PASS'
+            echo 'Unsafe-storage notice mutation-loop regressions: PASS'
             echo 'Renderer asset verification: PASS'
             echo 'Large-library responsiveness on Ubuntu/Xvfb: PASS'
             echo 'Now-playing and lyrics UI regression on Ubuntu/Xvfb: PASS'
@@ -235,7 +236,8 @@ jobs:
           # XT Music Ubuntu ${VERSION}
 
           从最新主分支 master 构建的 Ubuntu x64 桌面版，源码提交：${GITHUB_SHA}。
-          使用当前桌面版的界面与功能；本次仅增加 Ubuntu 构建和验证，不改动桌面交互，也不把安卓留声机界面自动移植到桌面。
+          保留现有桌面界面和功能；本次不是将安卓留声机界面移植到桌面。
+          同时修复系统安全存储不可用时，登录页安全提示反复改写自身导致的界面卡死；仍强制会话仅保留在内存中，不降低凭据存储安全要求。已增加三项回归测试。
 
           ## 下载与安装
           - XT-Music-${VERSION}-ubuntu-amd64.deb：Ubuntu amd64 安装包。
