@@ -81,8 +81,8 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
           set -euo pipefail
-          DEB="release/XT-Music-${VERSION}-ubuntu-x64.deb"
-          APPIMAGE="release/XT-Music-${VERSION}-ubuntu-x64.AppImage"
+          DEB="release/XT-Music-${VERSION}-ubuntu-amd64.deb"
+          APPIMAGE="release/XT-Music-${VERSION}-ubuntu-x86_64.AppImage"
           test -s "$DEB"
           test -s "$APPIMAGE"
           test "$(stat -c %s "$DEB")" -gt 50000000
@@ -109,7 +109,7 @@ jobs:
           timeout 100s xvfb-run -a node scripts/ubuntu-package-smoke.js \
             '/opt/XT Music/xtmusic' ubuntu-installed-deb "$VERSION"
           mkdir -p "$RUNNER_TEMP/xtmusic-appimage"
-          APPIMAGE="$PWD/release/XT-Music-${VERSION}-ubuntu-x64.AppImage"
+          APPIMAGE="$PWD/release/XT-Music-${VERSION}-ubuntu-x86_64.AppImage"
           chmod +x "$APPIMAGE"
           (cd "$RUNNER_TEMP/xtmusic-appimage" && "$APPIMAGE" --appimage-extract) \
             > verification/appimage-contents.txt
@@ -128,8 +128,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp "release/XT-Music-${VERSION}-ubuntu-x64.deb" release-out/
-          cp "release/XT-Music-${VERSION}-ubuntu-x64.AppImage" release-out/
+          cp "release/XT-Music-${VERSION}-ubuntu-amd64.deb" release-out/
+          cp "release/XT-Music-${VERSION}-ubuntu-x86_64.AppImage" release-out/
           for PROOF in ui-proof/windows-*.json ui-proof/windows-*.png; do
             test -f "$PROOF" || continue
             NAME="$(basename "$PROOF")"
@@ -226,13 +226,13 @@ jobs:
           使用当前桌面版的界面与功能；本次仅增加 Ubuntu 构建和验证，不改动桌面交互，也不把安卓留声机界面自动移植到桌面。
 
           ## 下载与安装
-          - XT-Music-${VERSION}-ubuntu-x64.deb：Ubuntu amd64 安装包。
-          - XT-Music-${VERSION}-ubuntu-x64.AppImage：x86_64 便携包。
+          - XT-Music-${VERSION}-ubuntu-amd64.deb：Ubuntu amd64 安装包。
+          - XT-Music-${VERSION}-ubuntu-x86_64.AppImage：x86_64 便携包。
           - SHA256SUMS-Ubuntu.txt：安装包、截图和验证材料的完整性校验。
           - BUILD-INFO-Ubuntu.txt / VERIFICATION-Ubuntu.txt：源码、构建环境和测试范围。
 
-          安装 DEB：sudo apt install ./XT-Music-${VERSION}-ubuntu-x64.deb
-          运行 AppImage：先 chmod +x XT-Music-${VERSION}-ubuntu-x64.AppImage，再运行该文件。
+          安装 DEB：sudo apt install ./XT-Music-${VERSION}-ubuntu-amd64.deb
+          运行 AppImage：先 chmod +x XT-Music-${VERSION}-ubuntu-x86_64.AppImage，再运行该文件。
           不需要删除旧账号配置；升级前请正常退出旧客户端。
 
           ## 验证范围
