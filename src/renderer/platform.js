@@ -52,7 +52,10 @@ function enforceSessionStorageSafety(root) {
   remember.checked = false;
   remember.disabled = true;
   const description = remember.closest('.check-row')?.querySelector('small');
-  if (description) description.textContent = '系统安全存储不可用，本次会话只保留在内存中。';
+  const message = '系统安全存储不可用，本次会话只保留在内存中。';
+  // Reassigning textContent creates a childList mutation even for equal text.
+  // This observer also sees that mutation, so the write must be idempotent.
+  if (description && description.textContent !== message) description.textContent = message;
 }
 
 const observer = new MutationObserver((mutations) => {
