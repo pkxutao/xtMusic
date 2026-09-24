@@ -1,0 +1,3 @@
+XT Music Native v0.3.0 controlled release request.
+Target base: master e394b64940c9f6a898cfbd7cb1bb87b01816df89
+Artifacts: Windows x64 setup, Ubuntu amd64 DEB, Ubuntu x86_64 portable tar.gz, checksums and build information.
