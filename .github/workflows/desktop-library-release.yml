@@ -1,0 +1,37 @@
+name: Desktop Full Library Release
+
+on:
+  push:
+    branches: [master]
+    paths: [.github/workflows/desktop-library-release.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked development dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          env -u ELECTRON_SKIP_BINARY_DOWNLOAD node node_modules/electron/install.js
+      - name: Export reproducible source and local verification dependencies
+        run: |
+          mkdir validation-workspace
+          git archive --format=tar.gz HEAD > validation-workspace/source.tar.gz
+          tar -czf validation-workspace/dependencies-linux.tar.gz node_modules
+          git rev-parse HEAD > validation-workspace/SOURCE-COMMIT.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-library-validation-workspace
+          path: validation-workspace/*
+          compression-level: 0
+          retention-days: 3
