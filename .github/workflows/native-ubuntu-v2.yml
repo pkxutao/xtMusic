@@ -1,0 +1,128 @@
+name: Native Ubuntu v2
+
+on:
+  push:
+    branches:
+      - feat/native-rust-egui-0.3.0
+    paths:
+      - 'native/**'
+      - 'packaging/linux/xtmusic-native.desktop'
+      - '.github/workflows/native-ubuntu-v2.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'native/**'
+      - 'packaging/linux/xtmusic-native.desktop'
+      - '.github/workflows/native-ubuntu-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libudev-dev libx11-dev libxi-dev libxcursor-dev \
+            libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev \
+            libgl1-mesa-dev pkg-config libssl-dev desktop-file-utils file curl
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target
+          shared-key: xtmusic-native-ubuntu-v2
+
+      - name: Prove pure native architecture
+        run: |
+          ! grep -Eiq 'tauri|wry|webview|electron|chromium' native/Cargo.toml
+          test -f native/src/main.rs
+
+      - name: Format and test
+        run: |
+          cargo fmt --manifest-path native/Cargo.toml --all -- --check
+          cargo test --manifest-path native/Cargo.toml
+          cargo clippy --manifest-path native/Cargo.toml --all-targets
+
+      - name: Build release binary
+        run: cargo build --manifest-path native/Cargo.toml --release
+
+      - name: Inspect native binary
+        run: |
+          file native/target/release/xtmusic
+          ldd native/target/release/xtmusic
+          ! strings native/target/release/xtmusic | grep -Eiq 'Electron|Chromium|WebView2|libwebkit2gtk|Tauri'
+
+      - name: Package DEB and AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=0.3.0
+          mkdir -p release
+          strip native/target/release/xtmusic
+
+          DEBROOT="$(mktemp -d)"
+          mkdir -p "$DEBROOT/DEBIAN" "$DEBROOT/usr/bin" \
+            "$DEBROOT/usr/share/applications" \
+            "$DEBROOT/usr/share/icons/hicolor/256x256/apps"
+          install -m 0755 native/target/release/xtmusic "$DEBROOT/usr/bin/xtmusic"
+          install -m 0644 packaging/linux/xtmusic-native.desktop "$DEBROOT/usr/share/applications/xtmusic-native.desktop"
+          install -m 0644 assets/app-icon.png "$DEBROOT/usr/share/icons/hicolor/256x256/apps/xtmusic-native.png"
+          cat > "$DEBROOT/DEBIAN/control" <<EOF
+          Package: xtmusic-native
+          Version: ${VERSION}
+          Section: sound
+          Priority: optional
+          Architecture: amd64
+          Maintainer: pkxutao
+          Depends: libasound2 | libasound2t64, libx11-6, libxi6, libxcursor1, libxrandr2, libxinerama1, libwayland-client0, libgl1
+          Description: Pure native Rust client for FNOS Music
+           GPU-native eframe/egui interface and rodio audio output. No Electron, Tauri or WebView.
+          EOF
+          dpkg-deb --root-owner-group --build "$DEBROOT" "release/XT-Music-Native-${VERSION}-Ubuntu-amd64.deb"
+          rm -rf "$DEBROOT"
+
+          APPDIR="$(mktemp -d)/XTMusicNative.AppDir"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+          install -m 0755 native/target/release/xtmusic "$APPDIR/usr/bin/xtmusic"
+          install -m 0644 packaging/linux/xtmusic-native.desktop "$APPDIR/xtmusic-native.desktop"
+          install -m 0644 packaging/linux/xtmusic-native.desktop "$APPDIR/usr/share/applications/xtmusic-native.desktop"
+          install -m 0644 assets/app-icon.png "$APPDIR/xtmusic-native.png"
+          install -m 0644 assets/app-icon.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/xtmusic-native.png"
+          cat > "$APPDIR/AppRun" <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/xtmusic" "$@"
+          EOF
+          chmod +x "$APPDIR/AppRun"
+          curl -fsSL -o /tmp/appimagetool.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool.AppImage
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool.AppImage \
+            "$APPDIR" "release/XT-Music-Native-${VERSION}-Ubuntu-x86_64.AppImage"
+          rm -rf "$(dirname "$APPDIR")" /tmp/appimagetool.AppImage
+
+          dpkg-deb --info "release/XT-Music-Native-${VERSION}-Ubuntu-amd64.deb"
+          file "release/XT-Music-Native-${VERSION}-Ubuntu-x86_64.AppImage"
+          (cd release && sha256sum XT-Music-Native-* > SHA256SUMS-Native-Ubuntu.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Native-Ubuntu-v2-0.3.0
+          path: |
+            release/XT-Music-Native-*.deb
+            release/XT-Music-Native-*.AppImage
+            release/SHA256SUMS-Native-Ubuntu.txt
+          if-no-files-found: error
+          retention-days: 14

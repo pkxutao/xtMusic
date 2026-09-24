@@ -1,0 +1,52 @@
+name: Native Branch Cleanup
+
+on:
+  push:
+    branches:
+      - feat/native-rust-egui-0.3.0
+    paths:
+      - '.migration/**'
+      - 'native-src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/native-branch-cleanup.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: xtmusic-native-branch-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/native-rust-egui-0.3.0
+          fetch-depth: 0
+
+      - name: Remove obsolete migration artifacts and legacy build pipelines
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -rf --ignore-unmatch .migration native-src Cargo.toml Cargo.lock rust-toolchain.toml
+          git rm -f --ignore-unmatch \
+            .github/workflows/windows-build.yml \
+            .github/workflows/ubuntu-build.yml \
+            .github/workflows/release.yml
+
+      - name: Commit cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'chore(native): remove obsolete migration payloads and Electron CI'
+          git push origin HEAD:feat/native-rust-egui-0.3.0

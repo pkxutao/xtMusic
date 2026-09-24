@@ -1,0 +1,82 @@
+name: Native Windows v2
+
+on:
+  push:
+    branches:
+      - feat/native-rust-egui-0.3.0
+    paths:
+      - 'native/**'
+      - 'packaging/windows/native-installer-v2.nsi'
+      - '.github/workflows/native-windows-v2.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'native/**'
+      - 'packaging/windows/native-installer-v2.nsi'
+      - '.github/workflows/native-windows-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 70
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target
+          shared-key: xtmusic-native-windows-v2
+
+      - name: Prove pure native architecture
+        shell: pwsh
+        run: |
+          if (Select-String -Path native/Cargo.toml -Pattern 'tauri|wry|webview|electron|chromium' -Quiet) {
+            throw 'Web runtime dependency detected in native/Cargo.toml'
+          }
+          if (-not (Test-Path native/src/main.rs)) { throw 'Missing native Rust entrypoint' }
+
+      - name: Format and test
+        shell: pwsh
+        run: |
+          cargo fmt --manifest-path native/Cargo.toml --all -- --check
+          cargo test --manifest-path native/Cargo.toml
+          cargo clippy --manifest-path native/Cargo.toml --all-targets
+
+      - name: Build release binary
+        run: cargo build --manifest-path native/Cargo.toml --release
+
+      - name: Install NSIS
+        run: choco install nsis --yes --no-progress
+
+      - name: Package Windows artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force release | Out-Null
+          $binary = (Resolve-Path 'native/target/release/xtmusic.exe').Path
+          $standalone = Join-Path $pwd 'release/XT-Music-Native-0.3.0-Windows-x64.exe'
+          $portable = Join-Path $pwd 'release/XT-Music-Native-0.3.0-Windows-x64-Portable.zip'
+          $setup = Join-Path $pwd 'release/XT-Music-Native-0.3.0-Windows-x64-Setup.exe'
+          Copy-Item $binary $standalone
+          Compress-Archive -Path $binary -DestinationPath $portable -Force
+          & "$env:ProgramFiles(x86)\NSIS\makensis.exe" "/DVERSION=0.3.0" "/DBINARY=$binary" "/DOUTFILE=$setup" packaging/windows/native-installer-v2.nsi
+          if (-not (Test-Path $setup)) { throw 'NSIS installer was not created' }
+          Get-FileHash release/* -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
+            Set-Content release/SHA256SUMS-Native-Windows.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XT-Music-Native-Windows-v2-0.3.0
+          path: release/*
+          if-no-files-found: error
+          retention-days: 14
