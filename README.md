@@ -1,3 +1,11 @@
+# XT Music Desktop 0.3.8
+
+最新桌面维护版 **v0.3.8** 延续已发布 0.3.7 的 `src/` 桌面实现，提供 Windows x64、Ubuntu DEB 与 AppImage，以及独立于 400 首列表分页的全曲库随机播放。详见 [0.3.8 桌面版说明](releases/v0.3.8-desktop.md)。使用 `npm ci`、`npm run build`、`npm run dist:ubuntu` / `npm run dist:win` 构建；自动发布使用 `.github/workflows/desktop-library-release.yml`。
+
+`native/` 中的 Rust 原生实现与安卓代码继续保留，以下为独立 Native v0.3.0 的历史说明，并非本次 0.3.8 安装包的构建方式。
+
+---
+
 # XT Music Native
 
 XT Music 是面向 Windows 与 Ubuntu 的飞牛音乐桌面客户端。当前主线 `v0.3.0` 使用 **Rust + egui/eframe + rodio/cpal**，不使用 Electron、Tauri 或 WebView 作为桌面运行时。

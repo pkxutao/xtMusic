@@ -307,6 +307,7 @@ export function trackPageView({
   tracks,
   kind = 'tracks',
   actionLabel = null,
+  shuffleLabel = '全部随机播放',
   pagination = null
 }) {
   return `
@@ -320,11 +321,13 @@ export function trackPageView({
         <div class="page-heading-actions">
           ${tracks.length ? `
             <button class="primary-button compact" data-action="play-all">${icon('play', 16)}${escapeHtml(actionLabel || '播放全部')}</button>
-            <button class="secondary-button compact" data-action="shuffle-all">${icon('shuffle', 16)}随机播放</button>
+            <button class="secondary-button compact" data-action="shuffle-all">${icon('shuffle', 16)}${escapeHtml(shuffleLabel)}</button>
           ` : ''}
           <button class="secondary-button compact" data-action="refresh">${icon('refresh', 16)}刷新</button>
         </div>
       </div>
+      <div id="library-playback-status" class="library-playback-status" role="status" aria-live="polite"></div>
+      ${paginationView(pagination)}
       ${tracks.length ? '<div id="track-table-host" class="track-table-host"></div>' : emptyState('music', '这里还没有歌曲')}
       ${paginationView(pagination)}
     </div>
@@ -346,15 +349,17 @@ export function detailView({ kind, item, tracks, pagination = null }) {
             <h1>${escapeHtml(title)}</h1>
             <p class="detail-meta">${escapeHtml(meta)}</p>
             <div class="detail-actions">
-              <button class="primary-button" data-action="play-all">${icon('play', 17)}播放</button>
-              <button class="secondary-button" data-action="shuffle-all">${icon('shuffle', 17)}随机播放</button>
+              <button class="primary-button" data-action="play-all">${icon('play', 17)}播放本页</button>
+              <button class="secondary-button" data-action="shuffle-all">${icon('shuffle', 17)}全部随机播放</button>
               ${kind === 'playlist' ? `<button class="icon-button outlined" data-action="edit-playlist" title="编辑歌单">${icon('settings', 18)}</button>` : ''}
               <button class="icon-button outlined" data-action="detail-more" title="更多">${icon('more', 19)}</button>
             </div>
           </div>
         </div>
       </section>
+      <div id="library-playback-status" class="library-playback-status" role="status" aria-live="polite"></div>
       <section class="detail-tracks">
+        ${paginationView(pagination)}
         <div class="section-title-row">
           <div><h2>歌曲</h2><span>${tracks.length} 首</span></div>
         </div>
@@ -562,20 +567,21 @@ export function promptModal({ title, label, value = '', action, danger = false, 
 }
 
 function paginationView(pagination) {
-  if (!pagination || Number(pagination.pages || 1) <= 1) return '';
+  if (!pagination) return '';
+  const known = pagination.totalKnown !== false;
   const page = Math.max(1, Number(pagination.page || 1));
-  const pages = Math.max(1, Number(pagination.pages || 1));
-  const previous = Math.max(1, page - 1);
-  const next = Math.min(pages, page + 1);
+  const pages = known ? Math.max(1, Number(pagination.pages || 1)) : null;
+  if (known && pages <= 1) return '';
+  const hasNext = pagination.hasNext ?? page < pages;
   return `
     <nav class="library-pagination" aria-label="音乐库分页">
-      <span>第 ${pagination.start || 0}–${pagination.end || 0} 项，共 ${pagination.total || 0} 项</span>
+      <span>第 ${pagination.start || 0}–${pagination.end || 0} 项${known ? `，共 ${pagination.total || 0} 项` : '，总数待确认'}</span>
       <div class="library-pagination-actions">
         <button class="secondary-button compact" data-action="library-page" data-page="1" ${page <= 1 ? 'disabled' : ''}>${icon('chevronLeft', 15)}首页</button>
-        <button class="secondary-button compact" data-action="library-page" data-page="${previous}" ${page <= 1 ? 'disabled' : ''}>上一页</button>
-        <strong>${page} / ${pages}</strong>
-        <button class="secondary-button compact" data-action="library-page" data-page="${next}" ${page >= pages ? 'disabled' : ''}>下一页</button>
-        <button class="secondary-button compact" data-action="library-page" data-page="${pages}" ${page >= pages ? 'disabled' : ''}>末页${icon('chevronRight', 15)}</button>
+        <button class="secondary-button compact" data-action="library-page" data-page="${Math.max(1, page - 1)}" ${page <= 1 ? 'disabled' : ''}>上一页</button>
+        <strong>${page}${known ? ` / ${pages}` : ''}</strong>
+        <button class="secondary-button compact" data-action="library-page" data-page="${page + 1}" ${!hasNext ? 'disabled' : ''}>下一页</button>
+        ${known ? `<button class="secondary-button compact" data-action="library-page" data-page="${pages}" ${page >= pages ? 'disabled' : ''}>末页${icon('chevronRight', 15)}</button>` : ''}
       </div>
     </nav>
   `;

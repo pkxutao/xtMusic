@@ -24,10 +24,11 @@ test('post-login route is rendered before secondary playlist loading', () => {
 
 test('closed and long queues cannot create an unbounded hidden DOM', () => {
   assert.match(app, /if \(!this\.store\.get\(\)\.queueOpen\)/);
-  assert.match(app, /queueRenderWindow\(state\.queue, state\.index, MAX_QUEUE_ROWS\)/);
+  assert.match(app, /this\.player\.order\.window\(MAX_QUEUE_ROWS\)/);
   assert.match(app, /const MAX_QUEUE_ROWS = 160/);
-  assert.match(player, /const MAX_PERSISTED_QUEUE = 500/);
-  assert.match(player, /persistentQueueSnapshot/);
+  assert.doesNotMatch(player, /MAX_PERSISTED_QUEUE|persistentQueueSnapshot/);
+  assert.match(player, /storage.save\(scope, state, queue\)/);
+  assert.match(player, /queueChanged \?/);
 });
 
 test('frequent progress events update only progress controls', () => {

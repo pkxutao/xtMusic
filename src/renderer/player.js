@@ -1,18 +1,18 @@
+import { PlaybackOrder } from './playback-order.js';
+import { PlaybackStorage } from './playback-storage.js';
+import { accountScope, compactTrack } from './library-source.js';
 import Hls from 'hls.js';
 import { activeLyricIndex, parseLrc } from './lrc.js';
 import {
   artistsText,
   coverUrl,
-  safeJsonParse,
   streamUrl,
   trackDuration
 } from './utils.js';
 
-const QUEUE_STORAGE_KEY = 'xtmusic.player.queue.v1';
-const MAX_PERSISTED_QUEUE = 500;
 
 export class Player extends EventTarget {
-  constructor({ musicCall, publishState, onVolumeChange, diagnostics }) {
+  constructor({ musicCall, publishState, onVolumeChange, diagnostics, storage = new PlaybackStorage() }) {
     super();
     this.musicCall = musicCall;
     this.publishState = publishState;
@@ -37,7 +37,17 @@ export class Player extends EventTarget {
     this.activeLyric = -1;
     this.loading = false;
     this.error = null;
-    this.#restore();
+    this.storage = storage;
+    this.scope = '';
+    this.scopeSerial = 0;
+    this.queueRevision = 0;
+    this.generation = '';
+    this.source = { kind: 'queue', label: '当前队列' };
+    this.order = new PlaybackOrder();
+    this.persistence = Promise.resolve();
+    this.persistenceWarning = false;
+    this.resumePosition = null;
+    this.lastProgressSave = 0;
     this.#bind();
     this.#setupMediaSession();
   }
@@ -49,6 +59,8 @@ export class Player extends EventTarget {
   get state() {
     return {
       queue: this.queue,
+      source: this.source,
+      cycle: this.order.cycle,
       index: this.index,
       track: this.currentTrack,
       playing: !this.audio.paused,
@@ -65,12 +77,67 @@ export class Player extends EventTarget {
     };
   }
 
-  async setQueue(tracks, startIndex = 0, { autoplay = true } = {}) {
+  // Restore only after the authenticated server/account is known. A previous
+  // account's pending disk writes finish before opening another account's data.
+  async useSession(session) {
+    const scope = accountScope(session);
+    if (scope && scope === this.scope) return;
+    const serial = ++this.scopeSerial;
+    this.#persistProgress();
+    this.stop();
+    this.scope = '';
+    this.queue = [];
+    this.index = -1;
+    this.order = new PlaybackOrder();
+    this.source = { kind: 'queue', label: '当前队列' };
+    this.queueRevision += 1;
+    this.resumePosition = null;
+    this.#emit('queue-replaced');
+    await this.persistence;
+    if (serial !== this.scopeSerial) return;
+    this.scope = scope;
+    if (scope) {
+      try {
+        const { queue, state, progress } = await this.storage.load(scope);
+        if (serial !== this.scopeSerial) return;
+        if (queue && state && queue.generation === state.generation && Array.isArray(queue.tracks)) {
+          const tracks = uniqueTracks(queue.tracks);
+          const order = PlaybackOrder.restore(state.order, tracks.length);
+          this.queue = tracks;
+          this.order = order;
+          this.index = order.current;
+          this.generation = queue.generation;
+          this.shuffle = order.shuffle;
+          this.repeatMode = ['off', 'one', 'all'].includes(state.repeatMode) ? state.repeatMode : 'off';
+          this.source = queue.source || { kind: 'queue', label: '当前队列' };
+          if (progress?.generation === queue.generation && progress.guid === this.currentTrack?.guid) {
+            this.resumePosition = { guid: progress.guid, seconds: Number(progress.seconds) || 0 };
+          }
+        }
+      } catch (error) { this.#storageError(error); }
+    }
+    if (serial !== this.scopeSerial) return;
+    this.#emit('queue');
+    this.#emit('track');
+    this.#emit('state');
+  }
+
+  async setQueue(tracks, startIndex = 0, { autoplay = true, shuffle = this.shuffle, source = null } = {}) {
     const normalized = uniqueTracks(tracks);
     if (!normalized.length) return;
     this.queue = normalized;
-    this.index = clamp(startIndex, 0, normalized.length - 1);
-    this.#persist();
+    this.shuffle = Boolean(shuffle);
+    this.order = new PlaybackOrder(normalized.length, {
+      shuffle: this.shuffle,
+      start: startIndex == null ? null : clamp(startIndex, 0, normalized.length - 1)
+    });
+    this.index = this.order.next();
+    this.queueRevision += 1;
+    this.generation = globalThis.crypto.randomUUID();
+    this.source = source || { kind: 'queue', label: '当前列表' };
+    this.resumePosition = null;
+    this.#persist(true);
+    this.#emit('queue-replaced');
     this.#emit('queue');
     await this.#loadCurrent({ autoplay });
   }
@@ -86,32 +153,39 @@ export class Player extends EventTarget {
   }
 
   addToQueue(tracks, { next = false } = {}) {
+    const existing = new Set(this.queue.map((track) => track.guid));
     const additions = uniqueTracks(Array.isArray(tracks) ? tracks : [tracks])
-      .filter((track) => !this.queue.some((item) => item.guid === track.guid));
+      .filter((track) => !existing.has(track.guid));
     if (!additions.length) return;
-    if (next && this.index >= 0) {
-      this.queue.splice(this.index + 1, 0, ...additions);
-    } else {
-      this.queue.push(...additions);
-    }
-    this.#persist();
+    const before = [...this.queue];
+    this.queue.push(...additions);
+    this.order.reconcile(before, this.queue, { next });
+    if (this.index < 0) this.index = this.order.next();
+    this.source = { kind: 'queue', label: '自定义队列' };
+    this.generation ||= globalThis.crypto.randomUUID();
+    this.queueRevision += 1;
+    this.#persist(true);
+    this.#emit('queue-replaced');
     this.#emit('queue');
   }
 
   removeFromQueue(index) {
     if (index < 0 || index >= this.queue.length) return;
     const removingCurrent = index === this.index;
+    const before = [...this.queue];
+    if (removingCurrent) this.order.next(this.repeatMode === 'all');
     this.queue.splice(index, 1);
-    if (!this.queue.length) {
-      this.stop();
-      this.index = -1;
-    } else if (index < this.index) {
-      this.index -= 1;
-    } else if (removingCurrent) {
-      this.index = Math.min(index, this.queue.length - 1);
+    this.order.reconcile(before, this.queue);
+    this.index = this.order.current;
+    if (!this.queue.length) { this.stop(); this.index = -1; }
+    else if (removingCurrent) {
+      if (this.index < 0) this.index = this.order.next() ?? this.order.jump(0);
       this.#loadCurrent({ autoplay: true });
     }
-    this.#persist();
+    this.source = { kind: 'queue', label: '自定义队列' };
+    this.queueRevision += 1;
+    this.#persist(true);
+    this.#emit('queue-replaced');
     this.#emit('queue');
   }
 
@@ -119,7 +193,13 @@ export class Player extends EventTarget {
     this.stop();
     this.queue = [];
     this.index = -1;
-    this.#persist();
+    this.order = new PlaybackOrder();
+    this.source = { kind: 'queue', label: '当前队列' };
+    this.generation = globalThis.crypto.randomUUID();
+    this.queueRevision += 1;
+    this.resumePosition = null;
+    this.#persist(true);
+    this.#emit('queue-replaced');
     this.#emit('queue');
     this.#emit('state');
   }
@@ -137,6 +217,7 @@ export class Player extends EventTarget {
 
   async play() {
     if (!this.currentTrack) return;
+    if (this.sourceMode === 'idle') return this.#loadCurrent({ autoplay: true });
     try {
       await this.audio.play();
       this.error = null;
@@ -147,6 +228,7 @@ export class Player extends EventTarget {
 
   pause() {
     this.audio.pause();
+    this.#persistProgress();
   }
 
   stop() {
@@ -168,22 +250,8 @@ export class Player extends EventTarget {
       await this.play();
       return;
     }
-    let nextIndex;
-    if (this.shuffle && this.queue.length > 1) {
-      do {
-        nextIndex = Math.floor(Math.random() * this.queue.length);
-      } while (nextIndex === this.index);
-    } else {
-      nextIndex = this.index + 1;
-      if (nextIndex >= this.queue.length) {
-        if (this.repeatMode === 'all') nextIndex = 0;
-        else {
-          this.pause();
-          this.seek(0);
-          return;
-        }
-      }
-    }
+    const nextIndex = this.order.next(this.repeatMode === 'all');
+    if (nextIndex == null) { this.pause(); return; }
     this.index = nextIndex;
     this.#persist();
     await this.#loadCurrent({ autoplay: true });
@@ -196,8 +264,8 @@ export class Player extends EventTarget {
       this.seek(0);
       return;
     }
-    let previousIndex = this.index - 1;
-    if (previousIndex < 0) previousIndex = this.repeatMode === 'all' ? this.queue.length - 1 : 0;
+    const previousIndex = this.order.previous();
+    if (previousIndex == null) { this.seek(0); return; }
     this.index = previousIndex;
     this.#persist();
     await this.#loadCurrent({ autoplay: true });
@@ -206,7 +274,7 @@ export class Player extends EventTarget {
 
   async jumpTo(index) {
     if (index < 0 || index >= this.queue.length) return;
-    this.index = index;
+    this.index = this.order.jump(index);
     this.#persist();
     await this.#loadCurrent({ autoplay: true });
     this.#emit('queue');
@@ -217,6 +285,7 @@ export class Player extends EventTarget {
     if (!Number.isFinite(value)) return;
     this.audio.currentTime = clamp(value, 0, Number(this.audio.duration || value));
     this.#updateLyric();
+    this.#persistProgress();
     this.#emit('progress');
   }
 
@@ -246,7 +315,9 @@ export class Player extends EventTarget {
 
   toggleShuffle() {
     this.shuffle = !this.shuffle;
+    this.order.setShuffle(this.shuffle);
     this.#persist();
+    this.#emit('queue');
     this.#emit('state');
   }
 
@@ -541,11 +612,18 @@ export class Player extends EventTarget {
       this.#emit('state');
     });
     this.audio.addEventListener('loadedmetadata', () => {
+      if (this.resumePosition?.guid === this.currentTrack?.guid) {
+        const seconds = this.resumePosition.seconds;
+        this.resumePosition = null;
+        if (seconds > 0 && seconds < this.audio.duration) this.audio.currentTime = seconds;
+      }
       this.loading = false;
       this.#emit('state');
       this.#updatePositionState();
     });
+    this.audio.addEventListener('pause', () => this.#persistProgress());
     this.audio.addEventListener('timeupdate', () => {
+      if (Date.now() - this.lastProgressSave > 15000) this.#persistProgress();
       this.#updateLyric();
       this.#emit('progress');
       this.#updatePositionState();
@@ -632,7 +710,9 @@ export class Player extends EventTarget {
   }
 
   #prefetchNextCover() {
-    const next = this.queue[this.index + 1];
+    const upcoming = this.order.window(32);
+    const position = upcoming.lastIndexOf(this.index);
+    const next = this.queue[upcoming[position + 1]];
     const coverId = next?.coverId || next?.album?.coverId;
     if (!coverId) return;
     const image = new Image();
@@ -657,34 +737,38 @@ export class Player extends EventTarget {
       playing: !this.audio.paused,
       title: track?.title || '',
       artist: track ? artistsText(track) : '',
-      canPrevious: this.queue.length > 0 && (this.index > 0 || this.repeatMode === 'all'),
-      canNext: this.queue.length > 0 && (this.index < this.queue.length - 1 || this.repeatMode === 'all')
+      canPrevious: this.queue.length > 0 && this.order.canPrevious,
+      canNext: this.queue.length > 0 && (this.order.canNext || this.repeatMode === 'all')
     });
   }
 
-  #persist() {
-    const snapshot = persistentQueueSnapshot(this.queue, this.index);
-    const payload = {
-      queue: snapshot.queue,
-      index: snapshot.index,
-      repeatMode: this.repeatMode,
-      shuffle: this.shuffle
-    };
-    try {
-      localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(payload));
-    } catch {
-      // Queue persistence is non-critical.
-    }
+  #storageError(error) {
+    if (this.persistenceWarning) return;
+    this.persistenceWarning = true;
+    this.#emit('error', `播放可继续，但无法保存/恢复播放记录：${error?.message || '磁盘不可用'}`);
   }
 
-  #restore() {
-    const saved = safeJsonParse(localStorage.getItem(QUEUE_STORAGE_KEY), null);
-    if (!saved || !Array.isArray(saved.queue)) return;
-    this.queue = uniqueTracks(saved.queue).slice(0, MAX_PERSISTED_QUEUE);
-    this.index = this.queue.length ? clamp(Number(saved.index || 0), 0, this.queue.length - 1) : -1;
-    this.repeatMode = ['off', 'all', 'one'].includes(saved.repeatMode) ? saved.repeatMode : 'off';
-    this.shuffle = Boolean(saved.shuffle);
+  #persist(queueChanged = false) {
+    if (!this.scope) return;
+    const scope = this.scope;
+    const state = structuredClone({ generation: this.generation,
+      order: this.order.snapshot(), repeatMode: this.repeatMode });
+    const queue = queueChanged ? { generation: this.generation,
+      tracks: this.queue.map(compactTrack), source: { ...this.source } } : null;
+    this.persistence = this.persistence.then(() => this.storage.save(scope, state, queue))
+      .catch((error) => this.#storageError(error));
   }
+
+  #persistProgress() {
+    if (!this.scope || !this.currentTrack || this.loading || this.sourceMode === 'idle') return;
+    this.lastProgressSave = Date.now();
+    const scope = this.scope;
+    const progress = { generation: this.generation, guid: this.currentTrack.guid,
+      seconds: Number(this.audio.currentTime) || 0 };
+    this.persistence = this.persistence.then(() => this.storage.saveProgress(scope, progress))
+      .catch((error) => this.#storageError(error));
+  }
+
 }
 
 async function probeMediaSource(url, { playlist = false } = {}) {
@@ -833,20 +917,6 @@ function formatPlaybackError(error) {
     return '系统阻止了自动播放，请再次点击播放按钮';
   }
   return code && !message.includes(code) ? `${message}（${code}）` : message;
-}
-
-function persistentQueueSnapshot(queue, index) {
-  const list = Array.isArray(queue) ? queue : [];
-  if (list.length <= MAX_PERSISTED_QUEUE) {
-    return { queue: list, index: list.length ? clamp(Number(index || 0), 0, list.length - 1) : -1 };
-  }
-  const safeIndex = clamp(Number(index || 0), 0, list.length - 1);
-  let start = Math.max(0, safeIndex - Math.floor(MAX_PERSISTED_QUEUE / 2));
-  start = Math.min(start, list.length - MAX_PERSISTED_QUEUE);
-  return {
-    queue: list.slice(start, start + MAX_PERSISTED_QUEUE),
-    index: safeIndex - start
-  };
 }
 
 function uniqueTracks(tracks) {

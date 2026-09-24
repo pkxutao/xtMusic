@@ -14,7 +14,7 @@ test('large top-level libraries fetch only the requested bounded page', () => {
   assert.match(appSource, /GRID_PAGE_SIZE = 72/);
   assert.match(appSource, /TRACK_PAGE_SIZE = 400/);
   assert.match(appSource, /getAlbums', \{ page, size: GRID_PAGE_SIZE \}/);
-  assert.match(appSource, /getTracks', \{ page, size: TRACK_PAGE_SIZE \}/);
+  assert.match(appSource, /getTracks', \{ page, size: trackPageSize \}/);
   assert.doesNotMatch(appSource, /case 'albums':[\s\S]{0,180}#fetchAll/);
   assert.doesNotMatch(appSource, /case 'tracks':[\s\S]{0,180}#fetchAll/);
 });

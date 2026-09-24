@@ -451,9 +451,10 @@ class FeiNiuClient {
     return {
       list,
       total: Number(data.total ?? list.length) || 0,
+      totalKnown: data.total != null && Number.isSafeInteger(Number(data.total)) && Number(data.total) >= 0,
       sort: data.sort ?? null,
       page: Number(query.page || 1),
-      size: Number(query.size || list.length)
+      size: Number(data.size || query.size || list.length)
     };
   }
 

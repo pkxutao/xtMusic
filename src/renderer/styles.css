@@ -2777,3 +2777,10 @@ select:focus-visible,
   font-size: 11px;
 }
 
+
+/* Full-library playback is independent of the bounded browser table. */
+.library-playback-status { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 12px 0; padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; color: var(--text-secondary); font-size: 13px; flex-wrap: wrap; }
+.library-playback-status strong { color: var(--text); }
+.queue-source { display: block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 5px; color: var(--text-secondary); }
+.library-pagination { flex-wrap: wrap; gap: 12px; }
+.library-pagination-actions { flex-wrap: wrap; }

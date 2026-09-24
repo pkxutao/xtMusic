@@ -1,3 +1,4 @@
+import { accountScope, librarySource, collectLibrary, checkAborted, abortable, knownTotal, pageFingerprint } from './library-source.js';
 import { api, bridge } from './api.js';
 import { Player } from './player.js';
 import { Store } from './store.js';
@@ -47,6 +48,8 @@ class XtMusicApp {
     this.requestSerial = 0;
     this.playlistLoadSerial = 0;
     this.sidebarSignature = '';
+    this.libraryTask = null;
+    this.libraryProgress = null;
     this.currentTracks = [];
     this.currentItems = [];
     this.currentDetail = null;
@@ -256,6 +259,8 @@ class XtMusicApp {
       if (this.store.get().route.name === 'lyrics') this.#renderLyricsPage();
     });
     this.player.addEventListener('queue', () => this.#renderQueue());
+    this.player.addEventListener('queue-replaced', () => this.#cancelLibraryShuffle());
+    window.addEventListener('pagehide', () => this.#cancelLibraryShuffle());
     this.player.addEventListener('lyrics', () => {
       if (this.store.get().route.name === 'lyrics') this.#renderLyricsPage();
     });
@@ -273,6 +278,8 @@ class XtMusicApp {
   }
 
   #showLogin(error = null, prefill = null) {
+    this.#cancelLibraryShuffle();
+    void this.player.useSession(null);
     this.requestSerial += 1;
     this.playlistLoadSerial += 1;
     this.sidebarSignature = '';
@@ -310,6 +317,8 @@ class XtMusicApp {
 
   async #enterSession(session) {
     const playlistSerial = ++this.playlistLoadSerial;
+    await this.player.useSession(session);
+    if (playlistSerial !== this.playlistLoadSerial) return;
     this.sidebarSignature = '';
     this.store.set({ session, error: null, playlists: [], playlistTotal: 0 }, 'session');
     this.els.loginRoot.classList.add('is-hidden');
@@ -415,14 +424,15 @@ class XtMusicApp {
 
   async #fetchRouteData(route) {
     const page = normalizePage(route.params?.page);
+    const trackPageSize = Math.min(TRACK_PAGE_SIZE, Number(route.params?.pageSize) || TRACK_PAGE_SIZE);
     switch (route.name) {
       case 'home':
         return api.music('getHome');
       case 'tracks':
         return normalizePageResult(
-          await api.music('getTracks', { page, size: TRACK_PAGE_SIZE }),
+          await api.music('getTracks', { page, size: trackPageSize }),
           page,
-          TRACK_PAGE_SIZE
+          trackPageSize
         );
       case 'albums':
         return normalizePageResult(
@@ -444,15 +454,15 @@ class XtMusicApp {
         );
       case 'favorites':
         return normalizePageResult(
-          await api.music('getFavorites', { page, size: TRACK_PAGE_SIZE }),
+          await api.music('getFavorites', { page, size: trackPageSize }),
           page,
-          TRACK_PAGE_SIZE
+          trackPageSize
         );
       case 'history':
         return normalizePageResult(
-          await api.music('getHistory', { page, size: TRACK_PAGE_SIZE }),
+          await api.music('getHistory', { page, size: trackPageSize }),
           page,
-          TRACK_PAGE_SIZE
+          trackPageSize
         );
       case 'search':
         return api.music('search', { query: route.params.query, page: 1, size: 100 });
@@ -484,12 +494,9 @@ class XtMusicApp {
       genre: 'genreGUID',
       playlist: 'playlistGUID'
     }[kind];
-    const result = await api.music(method, {
-      [key]: params.guid,
-      page,
-      size: DETAIL_TRACK_PAGE_SIZE
-    });
-    const paged = normalizePageResult(result, page, DETAIL_TRACK_PAGE_SIZE);
+    const size = Math.min(DETAIL_TRACK_PAGE_SIZE, Number(params.pageSize) || DETAIL_TRACK_PAGE_SIZE);
+    const result = await api.music(method, { [key]: params.guid, page, size });
+    const paged = normalizePageResult(result, page, size);
     return {
       item,
       tracks: paged.list,
@@ -628,6 +635,7 @@ class XtMusicApp {
       default:
         this.els.content.innerHTML = homeView(data, this.store.get().session);
     }
+    this.#renderLibraryStatus();
     this.els.content.scrollTop = 0;
   }
 
@@ -638,7 +646,8 @@ class XtMusicApp {
       subtitle,
       tracks,
       pagination,
-      actionLabel
+      actionLabel,
+      shuffleLabel: this.store.get().route.name === 'history' ? '随机播放本页' : '全部随机播放'
     });
     this.#mountTrackTable(tracks);
   }
@@ -659,9 +668,84 @@ class XtMusicApp {
     const current = this.store.get().route;
     const page = normalizePage(rawPage);
     if (page === normalizePage(current.params?.page)) return;
-    this.store.navigate(current.name, { ...current.params, page }, { replace: true });
+    const pageSize = this.cache.get(routeKey(current))?.pagination?.pageSize || current.params.pageSize;
+    this.store.navigate(current.name, { ...current.params, page, ...(pageSize ? { pageSize } : {}) }, { replace: true });
     this.#renderChrome();
     await this.#loadRoute(this.store.get().route);
+  }
+
+  #cancelLibraryShuffle() {
+    this.libraryTask?.controller.abort();
+    this.libraryTask = null;
+    this.libraryProgress = null;
+    this.#renderLibraryStatus();
+  }
+
+  #renderLibraryStatus() {
+    const host = this.els.content.querySelector('#library-playback-status');
+    if (!host) return;
+    const progress = this.libraryProgress;
+    const source = librarySource(this.store.get().route);
+    if (progress) {
+      host.innerHTML = `<span>正在准备${escapeHtml(progress.label)}随机播放：已读取
+        <strong>${progress.loaded.toLocaleString()}</strong>${progress.total == null ? ' 首（正在确认完整曲库）' : ` / ${progress.total.toLocaleString()} 首`}</span>
+        <button class="text-button" data-action="cancel-library-shuffle">取消</button>`;
+    } else if (this.player.queue.length && this.player.source?.key) {
+      host.innerHTML = `<span>播放来源：<strong>${escapeHtml(this.player.source.label)} · ${this.player.queue.length.toLocaleString()} 首</strong>
+        ${this.player.shuffle ? ` · 随机第 ${this.player.order.cycle} 轮` : ' · 顺序播放'}</span>
+        ${source ? '<button class="text-button" data-action="refresh-library-shuffle" title="重新扫描当前曲库并开始新一轮随机播放">重新扫描并随机播放</button>' : ''}`;
+    } else {
+      host.textContent = source ? '全部随机播放覆盖当前曲库，不受本页显示数量限制；首次使用需要准备曲库索引。' : '随机播放仅作用于本页记录。';
+    }
+    for (const button of this.els.content.querySelectorAll('[data-action="shuffle-all"]')) {
+      button.disabled = Boolean(this.libraryTask);
+    }
+  }
+
+  async #startLibraryShuffle({ force = false } = {}) {
+    const source = librarySource(this.store.get().route);
+    if (!source || !this.player.scope) return;
+    this.#cancelLibraryShuffle();
+    const controller = new AbortController();
+    const task = { controller, scope: this.player.scope, revision: this.player.queueRevision };
+    this.libraryTask = task;
+    this.libraryProgress = { label: source.label, loaded: 0, total: null };
+    this.#renderLibraryStatus();
+    try {
+      const signal = controller.signal;
+      const call = (method, args) => api.music(method, args);
+      const first = await abortable(call(source.method, { ...source.args, page: 1, size: 400 }), signal);
+      const cached = force ? null : await this.player.storage.library(task.scope, source.key).catch(() => null);
+      checkAborted(signal);
+      const total = knownTotal(first);
+      let index;
+      if (cached?.complete && Array.isArray(cached.tracks) && cached.tracks.length === cached.total &&
+          Date.now() - cached.savedAt < 5 * 60 * 1000 && total != null && total === cached.total &&
+          cached.fingerprint === pageFingerprint(first)) {
+        index = cached;
+      } else {
+        index = await collectLibrary(call, source, { first, signal, onProgress: (progress) => {
+          this.libraryProgress = { ...progress, label: source.label };
+          this.#renderLibraryStatus();
+        } });
+        checkAborted(signal);
+        await this.player.storage.library(task.scope, source.key, index).catch(() => {
+          this.toast('无法缓存曲库索引，本次播放不受影响；下次需要重新扫描', 'warning');
+        });
+      }
+      checkAborted(signal);
+      if (this.libraryTask !== task || this.player.scope !== task.scope || this.player.queueRevision !== task.revision) return;
+      this.libraryTask = null;
+      this.libraryProgress = null;
+      if (!index.tracks.length) { this.toast('曲库中没有可播放的歌曲', 'warning'); return; }
+      await this.player.setQueue(index.tracks, null, { shuffle: true, source });
+      this.toast(`已开启${source.label}随机播放，共 ${index.total.toLocaleString()} 首`, 'success');
+    } catch (error) {
+      if (error.name !== 'AbortError') this.toast(`全曲库随机播放未启动：${error.message}。原播放队列已保留。`, 'error');
+    } finally {
+      if (this.libraryTask === task) { this.libraryTask = null; this.libraryProgress = null; }
+      this.#renderLibraryStatus();
+    }
   }
 
   #openNowPlaying() {
@@ -752,10 +836,14 @@ class XtMusicApp {
         if (this.currentTracks.length) await this.player.setQueue(this.currentTracks, 0);
         break;
       case 'shuffle-all':
-        if (this.currentTracks.length) {
-          const shuffled = [...this.currentTracks].sort(() => Math.random() - 0.5);
-          await this.player.setQueue(shuffled, 0);
-        }
+        if (librarySource(this.store.get().route)) await this.#startLibraryShuffle();
+        else if (this.currentTracks.length) await this.player.setQueue(this.currentTracks, null, { shuffle: true });
+        break;
+      case 'cancel-library-shuffle':
+        this.#cancelLibraryShuffle();
+        break;
+      case 'refresh-library-shuffle':
+        await this.#startLibraryShuffle({ force: true });
         break;
       case 'play-section': {
         const home = this.cache.get('home:{}');
@@ -796,6 +884,8 @@ class XtMusicApp {
         if (this.currentDetail?.kind === 'playlist') this.#showEditPlaylist(this.currentDetail.item);
         break;
       case 'clear-cache':
+        this.#cancelLibraryShuffle();
+        await this.player.storage.clearLibraries(this.player.scope).catch(() => {});
         await api.clearCache();
         this.toast('缓存已清理', 'success');
         break;
@@ -966,10 +1056,11 @@ class XtMusicApp {
     this.#renderLoginProgress({ message: '正在恢复加密会话…' });
     document.querySelector('#login-progress')?.classList.remove('is-hidden');
     try {
+      this.#cancelLibraryShuffle();
+      await this.player.useSession(null);
       const result = await api.switchAccount(id);
       this.store.set({ session: result.session, accounts: result.accounts }, 'switch');
       this.cache.clear();
-      this.player.clearQueue();
       await this.#enterSession(result.session);
     } catch (error) {
       this.#showLogin(error.message, account);
@@ -987,10 +1078,11 @@ class XtMusicApp {
     this.#closeModal();
     try {
       this.els.content.innerHTML = loadingView('正在切换账号…');
+      this.#cancelLibraryShuffle();
+      await this.player.useSession(null);
       const result = await api.switchAccount(id);
       this.store.set({ session: result.session, accounts: result.accounts }, 'switch');
       this.cache.clear();
-      this.player.clearQueue();
       await this.#enterSession(result.session);
     } catch (error) {
       const account = this.store.get().accounts.find((item) => item.id === id);
@@ -1002,11 +1094,13 @@ class XtMusicApp {
     const account = this.store.get().accounts.find((item) => item.id === id);
     if (!account) return;
     if (!window.confirm(`确定删除账号“${account.name || account.username}”吗？`)) return;
+    if (this.player.scope === accountScope(account)) await this.player.useSession(null);
+    await this.player.storage.removeAccount(accountScope(account)).catch(() => {});
     const result = await api.removeAccount(id);
     this.store.set({ accounts: result.accounts, session: result.session }, 'remove-account');
     if (!result.session) {
       this.#closeModal();
-      this.player.clearQueue();
+      await this.player.useSession(null);
       this.#showLogin();
     } else {
       this.#showAccounts();
@@ -1015,10 +1109,11 @@ class XtMusicApp {
 
   async #logout() {
     if (!window.confirm('退出后将清除此账号保存的登录令牌，确定继续吗？')) return;
+    this.#cancelLibraryShuffle();
+    await this.player.useSession(null);
     const result = await api.logout({ clearSession: true });
     this.store.set({ session: null, accounts: result.accounts }, 'logout');
     this.cache.clear();
-    this.player.clearQueue();
     this.#showLogin();
   }
 
@@ -1068,6 +1163,10 @@ class XtMusicApp {
     this.els.playerNext.innerHTML = icon('next', 19);
     this.els.playerShuffle.innerHTML = icon('shuffle', 17);
     this.els.playerShuffle.classList.toggle('is-active', state.shuffle);
+    this.els.playerShuffle.setAttribute('aria-pressed', String(state.shuffle));
+    this.els.playerShuffle.title = `随机播放：${state.source?.label || '当前队列'} · ${state.queue.length} 首（切换模式不会扩大播放范围）`;
+    this.els.playerQueue.title = `${state.source?.label || '当前队列'} · ${state.queue.length} 首`;
+    this.#renderLibraryStatus();
     this.els.playerRepeat.innerHTML = icon(state.repeatMode === 'one' ? 'repeatOne' : 'repeat', 17);
     this.els.playerRepeat.classList.toggle('is-active', state.repeatMode !== 'off');
     this.els.playerLyrics.innerHTML = `${icon('lyrics', 18)}<span>歌词</span>`;
@@ -1109,11 +1208,13 @@ class XtMusicApp {
       return;
     }
     const state = this.player.state;
-    const windowed = queueRenderWindow(state.queue, state.index, MAX_QUEUE_ROWS);
+    const indices = this.player.order.window(MAX_QUEUE_ROWS);
+    const windowed = { items: indices.map((index) => ({ track: state.queue[index], index })),
+      omitted: state.queue.length > indices.length };
     this.els.queue.innerHTML = `
       <div class="queue-inner">
         <div class="queue-header">
-          <div><h2>播放队列</h2><span>${state.queue.length} 首歌曲</span></div>
+          <div><h2>播放队列</h2><span>${state.queue.length} 首歌曲</span><small class="queue-source">${escapeHtml(state.source?.label || '当前队列')}${state.shuffle ? ` · 随机第 ${state.cycle} 轮` : ''}</small></div>
           ${state.queue.length ? `<button class="text-button" data-action="clear-queue">清空</button>` : ''}
         </div>
         <div class="queue-list">
@@ -1130,7 +1231,7 @@ class XtMusicApp {
               </div>
             `;
           }).join('') || '<div class="empty-state"><strong>队列是空的</strong><span>双击歌曲开始播放</span></div>'}
-          ${windowed.omitted ? `<div class="queue-window-note">队列较长，仅显示第 ${windowed.start + 1}–${windowed.end} 首；当前播放项始终保留在窗口内。</div>` : ''}
+          ${windowed.omitted ? `<div class="queue-window-note">这里只显示最近播放与即将播放的 ${windowed.items.length} 首，完整播放范围仍为 ${state.queue.length} 首。</div>` : ''}
         </div>
       </div>
     `;
@@ -1380,54 +1481,30 @@ function sessionKey(session) {
   return String(session.id || `${session.username || ''}@${session.serverUrl || session.fnId || ''}`);
 }
 
-function queueRenderWindow(queue, currentIndex, limit) {
-  const list = Array.isArray(queue) ? queue : [];
-  const size = Math.max(1, Number(limit || MAX_QUEUE_ROWS));
-  if (list.length <= size) {
-    return {
-      start: 0,
-      end: list.length,
-      omitted: false,
-      items: list.map((track, index) => ({ track, index }))
-    };
-  }
-  const safeIndex = Math.max(0, Math.min(list.length - 1, Number(currentIndex || 0)));
-  let start = Math.max(0, safeIndex - Math.floor(size / 2));
-  start = Math.min(start, list.length - size);
-  const end = Math.min(list.length, start + size);
-  return {
-    start,
-    end,
-    omitted: true,
-    items: list.slice(start, end).map((track, offset) => ({ track, index: start + offset }))
-  };
-}
-
 function normalizePage(value) {
   const page = Number.parseInt(String(value || 1), 10);
   return Number.isFinite(page) && page > 0 ? page : 1;
 }
 
-function normalizePageResult(result, requestedPage, pageSize) {
+function normalizePageResult(result, requestedPage, requestedSize) {
   const list = Array.isArray(result?.list) ? result.list : [];
-  const total = Math.max(0, Number(result?.total || list.length));
-  const pages = Math.max(1, Math.ceil(total / pageSize));
-  const page = Math.min(normalizePage(requestedPage), pages);
-  return {
-    list,
-    pagination: {
-      page,
-      pageSize,
-      total,
-      pages,
-      start: total ? (page - 1) * pageSize + 1 : 0,
-      end: total ? Math.min(total, (page - 1) * pageSize + list.length) : 0
-    }
-  };
+  const total = knownTotal(result);
+  const known = total != null;
+  const page = normalizePage(requestedPage);
+  let pageSize = Number(result?.size) || requestedSize;
+  if (page === 1 && list.length && list.length < pageSize && (!known || total > list.length)) pageSize = list.length;
+  const pages = known ? Math.max(1, Math.ceil(total / pageSize)) : null;
+  return { list, pagination: {
+    page, pageSize, total, pages, totalKnown: known,
+    hasNext: known ? page < pages : list.length > 0,
+    start: list.length ? (page - 1) * pageSize + 1 : 0,
+    end: list.length ? (page - 1) * pageSize + list.length : 0
+  } };
 }
 
 function pageSummary(pagination, unit) {
   const page = pagination || {};
+  if (page.totalKnown === false) return `第 ${page.start}–${page.end} ${unit}，服务器未返回总数，可继续翻页`;
   if (!page.total) return `0 ${unit}`;
   return `第 ${page.start}–${page.end} ${unit}，共 ${page.total} ${unit}`;
 }
