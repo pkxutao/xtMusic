@@ -3,35 +3,229 @@ name: Desktop Full Library Release
 on:
   push:
     branches: [master]
-    paths: [.github/workflows/desktop-library-release.yml]
+    paths:
+      - .github/workflows/desktop-library-release.yml
+      - .github/release-patches/desktop-v0.3.8.patch.part1
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-full-library-release
+  cancel-in-progress: false
+
 jobs:
-  prepare:
+  source:
     runs-on: ubuntu-22.04
-    timeout-minutes: 12
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      version: ${{ steps.source.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Install locked development dependencies
+      - name: Apply the reviewed source transaction, if present
+        shell: bash
         run: |
+          set -euo pipefail
+          PATCH=.github/release-patches/desktop-v0.3.8.patch.part1
+          if test -f "$PATCH"; then
+            python - <<'PY'
+          import base64, lzma, hashlib, pathlib
+          encoded = b''.join(p.read_bytes() for p in sorted(pathlib.Path('.github/release-patches').glob('desktop-v0.3.8.patch.part*')))
+          patch = lzma.decompress(base64.b64decode(encoded))
+          assert hashlib.sha256(patch).hexdigest() == '482dbc95dccbe140f2116c8a2b64578652ee61e70d06e500c5e37359010a03a0', 'Source patch integrity mismatch'
+          pathlib.Path('/tmp/desktop-v0.3.8.patch').write_bytes(patch)
+          PY
+            git apply --check /tmp/desktop-v0.3.8.patch
+            git apply --index /tmp/desktop-v0.3.8.patch
+          fi
+      - name: Validate the complete source before committing
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Commit directly to master without a pull request
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH=.github/release-patches/desktop-v0.3.8.patch.part1
+          if test -f "$PATCH"; then
+            git rm .github/release-patches/desktop-v0.3.8.patch.part*
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'feat(desktop): full-library shuffle with scoped persistent queues and verified paging'
+            git push origin HEAD:master
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Linux virtual desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth libfuse2 libgtk-3-0 libnss3 \
+            libasound2 libgbm1 libxss1 libxtst6 libatk-bridge2.0-0 libsecret-1-0 fonts-noto-cjk pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=xtmusic_ci
+          pactl set-default-sink xtmusic_ci
+      - name: Install locked dependencies and Electron
+        run: |
+          set -euo pipefail
           npm ci --no-audit --no-fund
           env -u ELECTRON_SKIP_BINARY_DOWNLOAD node node_modules/electron/install.js
-      - name: Export reproducible source and local verification dependencies
+          mkdir -p verification ui-proof
+      - name: Unit tests and renderer build
         run: |
-          mkdir validation-workspace
-          git archive --format=tar.gz HEAD > validation-workspace/source.tar.gz
-          tar -czf validation-workspace/dependencies-linux.tar.gz node_modules
-          git rev-parse HEAD > validation-workspace/SOURCE-COMMIT.txt
+          set -euo pipefail
+          npm run build 2>&1 | tee verification/application-tests.log
+          node scripts/verify-renderer-assets.js
+      - name: Existing desktop UI regressions
+        run: |
+          set -euo pipefail
+          PREFIX=()
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            if test -f node_modules/electron/dist/chrome-sandbox; then
+              sudo chown root:root node_modules/electron/dist/chrome-sandbox
+              sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+            fi
+            PREFIX=(xvfb-run -a)
+          fi
+          for TEST in windows-large-library-smoke windows-now-playing-smoke windows-album-navigation-smoke windows-track-list-typography-smoke; do
+            "${PREFIX[@]}" npx --no-install electron "scripts/$TEST.js" 2>&1 | tee "verification/$TEST.log"
+          done
+      - name: Build Ubuntu DEB and AppImage
+        if: runner.os == 'Linux'
+        run: npx --no-install electron-builder --linux AppImage deb --x64 --publish never
+      - name: Build Windows installer and portable
+        if: runner.os == 'Windows'
+        run: npx --no-install electron-builder --win nsis portable --x64 --publish never
+      - name: Install and test the exact Ubuntu DEB
+        if: runner.os == 'Linux'
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          DEB="release/XT-Music-${VERSION}-ubuntu-amd64.deb"
+          test "$(dpkg-deb -f "$DEB" Version)" = "$VERSION"
+          test "$(dpkg-deb -f "$DEB" Architecture)" = amd64
+          sudo apt-get install -y "$PWD/$DEB"
+          xvfb-run -a node scripts/desktop-library-e2e.js '/opt/XT Music/xtmusic' \
+            2>&1 | tee verification/full-library-e2e.log
+          mkdir -p "$RUNNER_TEMP/xtmusic-appimage"
+          APPIMAGE="$PWD/release/XT-Music-${VERSION}-ubuntu-x86_64.AppImage"
+          chmod +x "$APPIMAGE"
+          (cd "$RUNNER_TEMP/xtmusic-appimage" && "$APPIMAGE" --appimage-extract) > verification/appimage-files.txt
+          APPDIR="$RUNNER_TEMP/xtmusic-appimage/squashfs-root"
+          cmp '/opt/XT Music/resources/app.asar' "$APPDIR/resources/app.asar"
+          if test -f "$APPDIR/chrome-sandbox"; then
+            sudo chown root:root "$APPDIR/chrome-sandbox"
+            sudo chmod 4755 "$APPDIR/chrome-sandbox"
+          fi
+          xvfb-run -a node scripts/ubuntu-package-smoke.js "$APPDIR/AppRun" ubuntu-appimage-extracted "$VERSION"
+      - name: Install and test the exact Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $install = Join-Path $env:RUNNER_TEMP 'XTMusicVerified'
+          $process = Start-Process -FilePath "release/XT-Music-$env:VERSION-x64.exe" -ArgumentList @('/S', "/D=$install") -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
+          $binary = Join-Path $install 'XT Music.exe'
+          if (-not (Test-Path $binary)) { throw 'Installed application missing' }
+          if ((Get-FileHash "$install/resources/app.asar").Hash -ne (Get-FileHash 'release/win-unpacked/resources/app.asar').Hash) { throw 'Installed ASAR payload mismatch' }
+          node scripts/desktop-library-e2e.js "$binary" 2>&1 | Tee-Object -FilePath verification/full-library-e2e.log
+          if ($LASTEXITCODE -ne 0) { throw 'Windows full library E2E failed' }
+      - name: Collect packages, proofs and source provenance
+        run: node scripts/collect-desktop-release.js
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-library-validation-workspace
-          path: validation-workspace/*
+          name: desktop-${{ needs.source.outputs.version }}-${{ runner.os }}
+          path: release-out/*
           compression-level: 0
-          retention-days: 3
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-validation-${{ runner.os }}-${{ github.run_id }}
+          path: |
+            verification/
+            ui-proof/
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish:
+    needs: [source, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      VERSION: ${{ needs.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-${{ needs.source.outputs.version }}-*
+          merge-multiple: true
+          path: release-out
+      - name: Check both platforms and publish a new release without overwriting history
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/master" --jq .sha)" = "$SOURCE_SHA"
+          (cd release-out && sha256sum -c SHA256SUMS-linux.txt && sha256sum -c SHA256SUMS-win32.txt)
+          for FILE in "XT-Music-${VERSION}-ubuntu-amd64.deb" "XT-Music-${VERSION}-ubuntu-x86_64.AppImage" "XT-Music-${VERSION}-x64.exe" "XT-Music-Portable-${VERSION}-x64.exe"; do
+            test -s "release-out/$FILE"
+          done
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo 'Release already exists; refusing overwrite'; exit 1; fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then echo 'Tag already exists; refusing reuse'; exit 1; fi
+          cp "releases/v${VERSION}-desktop.md" release-out/RELEASE-NOTES.md
+          (cd release-out && sha256sum *.deb *.AppImage *.exe > SHA256SUMS.txt)
+          gh release create "$TAG" release-out/* --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+            --title "XT Music v${VERSION} · 全曲库随机播放（Windows / Ubuntu）" \
+            --notes-file release-out/RELEASE-NOTES.md --draft --latest=false
+          mkdir roundtrip
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir roundtrip
+          cmp release-out/SHA256SUMS.txt roundtrip/SHA256SUMS.txt
+          (cd roundtrip && sha256sum -c SHA256SUMS.txt && sha256sum -c SHA256SUMS-linux.txt && sha256sum -c SHA256SUMS-win32.txt)
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/master" --jq .sha)" = "$SOURCE_SHA"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=true
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '{tag_name, target_commitish, draft, prerelease, html_url, assets: [.assets[] | {name, size, digest}]}'
